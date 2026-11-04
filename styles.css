@@ -112,6 +112,8 @@ input[type="text"], input[type="password"], input[type="number"], input[type="da
   border: 1px solid var(--border); border-radius: 8px; padding: .5rem .6rem; width: 100%; min-width: 0;
 }
 textarea { resize: vertical; }
+select[size] { padding: .25rem; }
+select[size] option { padding: .3rem .4rem; border-radius: 4px; }
 textarea[readonly] { font: 13px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .row { display: flex; gap: .75rem; flex-wrap: wrap; }

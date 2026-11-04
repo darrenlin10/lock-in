@@ -153,33 +153,92 @@ async function canvasPng(page, file) {
   const after = await page.evaluate(() => ({ n: window.__lockIn.state.tasks.length, snaps: window.__lockIn.state.snapshots.length }));
   check(after.n === 7 && after.snaps === 1, `persisted after reload ${JSON.stringify(after)}`);
 
-  // Gemini BYOK: mocked API, verify request never contains task text or key in body.
+  // BYOK image generation with a user-chosen provider and model (mocked APIs).
+  // Checks: requests carry only the style prompt, keys go only to the chosen
+  // provider, keys are cleared on provider switch and never persisted.
+  const jpg = fs.readFileSync(path.join(out, 'wallpaper-pixel-black-evening.jpg')).toString('base64');
   let sentBody = '';
   await page.route('https://generativelanguage.googleapis.com/**', async (route) => {
     const req = route.request();
-    if (req.method() === 'GET') return route.fulfill({ json: { name: 'models/gemini-2.5-flash-image', displayName: 'Mock Image Model', supportedGenerationMethods: ['generateContent'] } });
+    if (req.method() === 'GET' && /\/models\?/.test(req.url())) {
+      return route.fulfill({ json: { models: [
+        { name: 'models/gemini-2.5-flash', displayName: 'Gemini Flash', supportedGenerationMethods: ['generateContent'] },
+        { name: 'models/gemini-2.5-flash-image', displayName: 'Gemini Flash Image', supportedGenerationMethods: ['generateContent'] },
+        { name: 'models/imagen-4.0-generate-001', displayName: 'Imagen 4', supportedGenerationMethods: ['predict'] },
+      ] } });
+    }
+    if (req.method() === 'GET') return route.fulfill({ json: { name: 'models/imagen-4.0-generate-001', displayName: 'Imagen 4', supportedGenerationMethods: ['predict'] } });
     sentBody = req.postData() || '';
-    const png = fs.readFileSync(path.join(out, 'wallpaper-pixel-black-evening.jpg')).toString('base64');
-    return route.fulfill({ json: { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/jpeg', data: png } }] } }] } });
+    check(req.url().endsWith(':predict'), `Imagen uses predict (${req.url()})`);
+    check(req.headers()['x-goog-api-key'] === 'google-key-not-real', 'Google key sent in header');
+    return route.fulfill({ json: { predictions: [{ mimeType: 'image/jpeg', bytesBase64Encoded: jpg }] } });
   });
   await page.click('.tab[data-tab=design]');
   await page.click('#scenery-card > summary');
   await page.click('.byok > summary');
-  await page.fill('#gem-key', 'test-key-not-real');
-  await page.click('#gem-verify');
-  await page.waitForFunction(() => document.querySelector('#gem-status').textContent.includes('Connected'));
-  await page.click('#gem-generate');
+  check((await page.inputValue('#ai-provider')) === 'gemini', 'Gemini is the default provider');
+  await page.fill('#ai-key', 'google-key-not-real');
+  await page.click('#ai-load-models');
+  await page.waitForFunction(() => !document.querySelector('#ai-model-pick-field').hidden);
+  const options = await page.$$eval('#ai-model-pick option', (o) => o.map((x) => x.value));
+  check(options.join() === 'gemini-2.5-flash-image,imagen-4.0-generate-001', `image models listed (${options})`);
+  await page.selectOption('#ai-model-pick', 'imagen-4.0-generate-001');
+  check((await page.inputValue('#ai-model')) === 'imagen-4.0-generate-001', 'picking a model fills the model field');
+  await page.click('#ai-verify');
+  await page.waitForFunction(() => document.querySelector('#ai-status').textContent.includes('Connected'));
+  await page.click('#ai-generate');
   await page.waitForFunction(() => !document.querySelector('#candidate-bar').hidden);
-  check(!/Capstone|rubric|outline|test-key/i.test(sentBody), 'Gemini request contains only the style prompt');
+  check(!/Capstone|rubric|outline|key-not-real/i.test(sentBody), 'request contains only the style prompt');
   check(sentBody.includes('Do not draw paper, text'), 'scenery prompt sent');
   await page.click('#candidate-discard');
+
+  // Switch to OpenAI: the Google key must be cleared, not reused.
+  let openaiAuth = '';
+  let openaiBody = '';
+  await page.route('https://api.openai.com/**', (route) => {
+    openaiAuth = route.request().headers()['authorization'] || '';
+    openaiBody = route.request().postData() || '';
+    return route.fulfill({ json: { data: [{ b64_json: jpg }], output_format: 'jpeg' } });
+  });
+  await page.selectOption('#ai-provider', 'openai');
+  check((await page.inputValue('#ai-key')) === '', 'key cleared when switching provider');
+  check((await page.inputValue('#ai-model')) === 'gpt-image-1', 'provider default model shown');
+  await page.click('#ai-generate');
+  await page.waitForFunction(() => document.querySelector('#ai-status').textContent.includes('Enter an API key'));
+  await page.fill('#ai-model', 'dall-e-3');
+  await page.fill('#ai-key', 'openai-key-not-real');
+  await page.click('#ai-generate');
+  await page.waitForFunction(() => !document.querySelector('#candidate-bar').hidden);
+  check(openaiAuth === 'Bearer openai-key-not-real', 'OpenAI key sent as bearer token');
+  const ob = JSON.parse(openaiBody || '{}');
+  check(ob.model === 'dall-e-3' && ob.size === '1024x1792' && ob.response_format === 'b64_json', `OpenAI request shape ${openaiBody.slice(0, 120)}`);
+  await page.click('#candidate-accept');
+  await page.waitForFunction(() => document.querySelector('#bg-current').textContent.includes('dall-e-3'));
+  await hideToast(page);
+  await page.screenshot({ path: path.join(out, 'app-ai-provider.jpg'), type: 'jpeg', quality: 82 });
+
+  // Custom endpoint: plain http to a remote host is refused.
+  await page.selectOption('#ai-provider', 'compatible');
+  await page.fill('#ai-base', 'http://images.example.com/v1');
+  await page.dispatchEvent('#ai-base', 'change');
+  check((await page.textContent('#ai-status')).includes('https://'), 'insecure base URL rejected');
+
   const stored = await page.evaluate(() => JSON.stringify(localStorage));
-  check(!stored.includes('test-key-not-real'), 'API key never persisted');
-  // Error path keeps working state
+  check(!stored.includes('key-not-real'), 'API keys never persisted');
+  const remembered = await page.evaluate(() => window.__lockIn.state.ai.models);
+  check(remembered.gemini === 'imagen-4.0-generate-001' && remembered.openai === 'dall-e-3', `model remembered per provider ${JSON.stringify(remembered)}`);
+
+  // Error path keeps working state.
+  await page.selectOption('#ai-provider', 'gemini');
+  check((await page.inputValue('#ai-model')) === 'imagen-4.0-generate-001', 'remembered model restored');
+  await page.fill('#ai-key', 'google-key-not-real');
   await page.unroute('https://generativelanguage.googleapis.com/**');
   await page.route('https://generativelanguage.googleapis.com/**', (r) => r.fulfill({ status: 429, json: { error: { status: 'RESOURCE_EXHAUSTED', message: 'quota' } } }));
-  await page.click('#gem-generate');
-  await page.waitForFunction(() => document.querySelector('#gem-status').textContent.includes('Quota'));
+  await page.click('#ai-generate');
+  await page.waitForFunction(() => document.querySelector('#ai-status').textContent.includes('Quota'));
+  check((await page.textContent('#bg-current')).includes('dall-e-3'), 'failed generation keeps the current background');
+  // Put the bundled desk back so later screenshots match the sample.
+  await page.check('input[name=bg-type][value=bundled]');
 
   // Challenge tab
   await page.click('.tab[data-tab=challenge]');

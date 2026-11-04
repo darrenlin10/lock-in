@@ -55,7 +55,7 @@ The mission names three learning outcomes. Lock-In treats all three as product f
 ### Where Gemini is used, honestly
 
 1. **Planning (required path).** You run the planning prompt in the Gemini app. Lock-In writes the prompt and imports the result, but never calls Gemini for planning itself.
-2. **Scenery (optional).** Gemini can generate the *desk background only*, either in the Gemini app (download the image, then *Upload image…*) or in-app with your own API key (BYOK). Lock-In always draws the paper, text and checkboxes itself.
+2. **Scenery (optional).** An image model can generate the *desk background only*. Generate it in the Gemini app (download the image, then *Upload image…*), or generate it in-app with your own API key (BYOK). In-app, **you choose the provider/API and the model**: the Google Gemini API (Gemini image models or Imagen), the OpenAI Images API, or any OpenAI-compatible endpoint at a URL you enter. Gemini is the default. Lock-In always draws the paper, text and checkboxes itself.
 3. **Not used** for task edits, countdown changes or re-exports. Those are re-composited locally in milliseconds, with no AI call and no cost.
 
 Why Gemini doesn't draw the text: image models can't guarantee correct dates, consistent paper placement or legible small text. A countdown that's off by a day defeats the purpose. So the design doc's "full AI render" mode is kept as a deferred experiment, and the functional renderer is deterministic.
@@ -86,13 +86,16 @@ Why Gemini doesn't draw the text: image models can't guarantee correct dates, co
 - When served from a real host (such as GitHub Pages), a service worker caches the app after the first visit. It is skipped on localhost so development edits show up immediately.
 - All data lives in your browser (`localStorage` plus IndexedDB for custom backgrounds). There's no server, account or analytics.
 
-**BYOK Gemini, carefully** (`src/gemini.js`):
-- The key is held in memory only. It is never written to storage, backups, logs or URLs (it travels in the `x-goog-api-key` header), and it's forgotten on reload.
+**Bring your own key, your own provider, your own model** (`src/ai.js`):
+- **Provider / API:** pick *Google Gemini API*, *OpenAI Images API*, or *OpenAI-compatible endpoint* (any service implementing `POST {base URL}/images/generations`, such as a self-hosted server). Custom base URLs must use `https://`; `http://` is allowed only for `localhost`.
+- **Model:** type any model ID, or click *Load available models* to fetch the list your key can actually use (image models first; tick *Include non-image models* to see everything). Your choice is remembered per provider. Defaults are only starting points (`gemini-2.5-flash-image`, `gpt-image-1`).
+- Lock-In builds the right request for the model: Gemini image models via `generateContent` with the nearest supported aspect ratio, Imagen via `predict`, and OpenAI-style models via `images/generations` with an orientation-matched size (override it in *Image size*).
+- The key is held in memory only. It is never written to storage, backups, logs or URLs (it travels in the provider's auth header), and it's forgotten on reload. **Switching provider or base URL clears the key**, so a key can never be sent to a different service by accident.
 - Requests contain only the style prompt; none of your tasks or deadline.
 - *Verify connection* checks the model before you generate.
 - Invalid key, quota, network, timeout and safety-blocked responses each get a clear message, and the current background is never discarded.
 - A new image is previewed as a candidate. Lock-In checks whether the clock and shortcut areas look busy, and you choose to use it or discard it.
-- Any charges are billed to the Google project that owns the key.
+- Any charges are billed to the account that owns the key.
 
 ---
 
@@ -113,7 +116,7 @@ The full design doc is in [`docs/DESIGN_DOC.md`](docs/DESIGN_DOC.md). Its §8 ta
 | 11: Local tasks + deadline model | ✅ Persistence, completion, priority, pinning, short labels, restart-safe |
 | 12: Deterministic composition + bundled presets | ✅ Offline, no key needed; calibration, wrapping, overflow |
 | 13: Limited aesthetic customizer | ✅ |
-| 14: Gemini BYOK scenery | ✅ Model pinned and editable, verify, memory-only key, failure handling, caching (IndexedDB) |
+| 14: BYOK scenery | ✅ User-chosen provider (Gemini API, OpenAI, OpenAI-compatible URL) and model (typed or loaded from the provider), verify, memory-only key, failure handling, caching (IndexedDB) |
 | 15: Wallpaper state handling | ✅ Generated / exported / installed (user-confirmed) / out-of-date |
 | 9, 10: Native platform proof + scaffold | ⛔ Not done: replaced by the PWA decision above |
 | 16: Native lock-screen widget | ⛔ Not implemented (needs WidgetKit / Glance) |
@@ -127,11 +130,11 @@ The doc's §3.2, §3.3, §4.2, §4.3 and §5.1 rules (content limits, countdown 
 ## What was and wasn't verified
 
 **Verified in this repository:**
-- `npm test`: 37 unit tests covering countdown/DST semantics, task selection, layout limits (minimum size, overflow, ellipsis, bounds), plan parsing, prompt templates, `.ics` generation (RFC 5545 escaping and 75-octet folding), Google Calendar links, storage fallback, snapshot state, and Gemini error mapping/key handling against a mocked API.
-- `npm run screenshots`: a headless-Chromium end-to-end run. It loads sample data at a fixed date, adds and completes a task, changes design, exports a PNG, confirms installation, checks the out-of-date detection, downloads the `.ics`, reloads to check persistence, and exercises the BYOK flow against a **mocked** Gemini API. It also checks the request contains no task text or key, that the key never reaches storage, that a 429 is handled, and that phone width has no horizontal scroll. It writes the images in `docs/images/`.
+- `npm test`: 43 unit tests covering countdown/DST semantics, task selection, layout limits (minimum size, overflow, ellipsis, bounds), plan parsing, prompt templates, `.ics` generation (RFC 5545 escaping and 75-octet folding), Google Calendar links, storage fallback, snapshot state, and the image-provider client (request shapes per provider and model, model listing, base-URL validation, key handling and error mapping) against mocked APIs.
+- `npm run screenshots`: a headless-Chromium end-to-end run. It loads sample data at a fixed date, adds and completes a task, changes design, exports a PNG, confirms installation, checks the out-of-date detection, downloads the `.ics`, reloads to check persistence, and exercises the BYOK flow against **mocked** Gemini, Imagen and OpenAI APIs: loading and picking a model, verifying, generating, and switching provider. It checks that requests contain no task text, that each key goes only to its own provider, that switching provider clears the key, that keys never reach storage, that insecure custom URLs are refused, that a 429 keeps the current background, and that phone width has no horizontal scroll. It writes the images in `docs/images/`.
 
 **Not verified here (please check before relying on them):**
-- **A live Gemini API call.** The default image model ID is `gemini-2.5-flash-image`. Availability and pricing change, so use *Verify connection* and change the model ID if needed.
+- **Live API calls.** No real Gemini, OpenAI or third-party endpoint was called; request formats follow each provider's documented API. Model availability and pricing change, so use *Load available models* and *Verify connection*. Some third-party endpoints don't allow browser requests (CORS); Lock-In reports that clearly when it happens.
 - **Installation on physical devices.** Device presets are starting points; confirm on your own phone or computer with your clock style and widgets.
 - **The mission's submission requirements.** The deadline, required uploads and judging criteria come from the signed-in Handshake mission page. The November 23, 2026 date in the original design notes is **unverified**. The Review tab reminds you to check the mission page.
 
@@ -151,7 +154,7 @@ src/prompts.js                Gemini planning and scenery templates (design doc 
 src/plan-import.js            Parse a pasted Gemini plan into dated actions
 src/reminders.js              Reminder items, .ics export, Google Calendar links
 src/store.js                  Persistence, migration, snapshot lifecycle
-src/gemini.js                 Optional BYOK scenery client
+src/ai.js                     Optional BYOK scenery client (choose provider + model)
 src/idb.js                    IndexedDB storage for background images
 sw.js, manifest.webmanifest   Offline support and installability
 tests/                        Node unit tests (node:test, no dependencies)

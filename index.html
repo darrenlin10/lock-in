@@ -180,7 +180,7 @@
           <legend>Background</legend>
           <div class="segmented">
             <label><input type="radio" name="bg-type" value="bundled" checked /> Bundled desk</label>
-            <label><input type="radio" name="bg-type" value="custom" id="bg-type-custom" /> <span id="bg-custom-label">Gemini / uploaded scenery</span></label>
+            <label><input type="radio" name="bg-type" value="custom" id="bg-type-custom" /> <span id="bg-custom-label">AI-generated / uploaded scenery</span></label>
           </div>
         </fieldset>
 
@@ -196,8 +196,8 @@
         </div>
 
         <details class="card" id="scenery-card">
-          <summary><strong>Use Gemini scenery</strong> <span class="muted">— optional</span></summary>
-          <p class="hint">Gemini generates the <em>desk only</em>. Lock-In draws the paper and every word at fixed coordinates, so dates and labels are always exactly right, and editing a task never needs another AI call.</p>
+          <summary><strong>Use AI-generated scenery</strong> <span class="muted">— optional</span></summary>
+          <p class="hint">The image model generates the <em>desk only</em>. Lock-In draws the paper and every word at fixed coordinates, so dates and labels are always exactly right, and editing a task never needs another AI call.</p>
           <label class="field">
             <span>Scenery prompt (uses the desk, lighting and accessories above)</span>
             <textarea id="scenery-prompt" rows="9" readonly></textarea>
@@ -207,21 +207,38 @@
             <a class="btn" href="https://gemini.google.com/app" target="_blank" rel="noopener">Open Gemini ↗</a>
             <label class="btn file-btn">Upload image…<input type="file" id="bg-upload" accept="image/png,image/jpeg,image/webp" hidden /></label>
           </div>
-          <p class="hint">No API key needed: generate the scenery in the Gemini app, download it, and upload it here. It is centre-cropped to your screen size.</p>
+          <p class="hint">No API key needed: paste the prompt into Gemini (or any image tool you like), download the image, and upload it here. It is centre-cropped to your screen size.</p>
 
           <details class="byok">
-            <summary>Or generate here with your own Gemini API key (BYOK)</summary>
-            <p class="hint">Your key stays in this tab's memory only. It is never saved, exported or sent anywhere except Google's Gemini API, and it's forgotten when you reload. Requests contain only the style prompt, never your tasks or deadline. Any charges go to the Google project that owns the key.</p>
+            <summary>Or generate here with your own API key (BYOK)</summary>
+            <p class="hint">Choose the image API and model you want to use. Your key stays in this tab's memory only. It is never saved or exported, it's sent only to the provider you selected, and it's forgotten when you reload or switch provider. Requests contain only the style prompt, never your tasks or deadline. Any charges go to the account that owns the key.</p>
             <div class="row">
-              <label class="field"><span>API key</span><input id="gem-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste key from Google AI Studio" /></label>
-              <label class="field"><span>Image model ID</span><input id="gem-model" type="text" spellcheck="false" /></label>
+              <label class="field"><span>Provider / API</span><select id="ai-provider"></select></label>
+              <label class="field" id="ai-base-field" hidden><span>Base URL</span><input id="ai-base" type="url" spellcheck="false" placeholder="https://example.com/v1" /></label>
+            </div>
+            <label class="field">
+              <span id="ai-key-label">API key</span>
+              <input id="ai-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key" />
+            </label>
+            <p class="hint" id="ai-key-hint"></p>
+            <div class="row">
+              <label class="field"><span>Model ID</span><input id="ai-model" type="text" spellcheck="false" autocomplete="off" placeholder="Type a model ID or load the list" /></label>
+              <label class="field" id="ai-size-field" hidden><span>Image size <small>(blank = automatic)</small></span><input id="ai-size" type="text" spellcheck="false" placeholder="e.g. 1024x1536" /></label>
             </div>
             <div class="buttons">
-              <button class="btn" id="gem-verify">Verify connection</button>
-              <button class="btn primary" id="gem-generate">Generate scenery</button>
-              <button class="btn ghost" id="gem-forget">Forget key</button>
+              <button class="btn" id="ai-load-models">Load available models</button>
+              <label class="check"><input type="checkbox" id="ai-show-all" /> Include non-image models</label>
             </div>
-            <p class="status" id="gem-status" aria-live="polite"></p>
+            <label class="field" id="ai-model-pick-field" hidden>
+              <span>Models available to this key</span>
+              <select id="ai-model-pick" size="6"></select>
+            </label>
+            <div class="buttons">
+              <button class="btn" id="ai-verify">Verify connection</button>
+              <button class="btn primary" id="ai-generate">Generate scenery</button>
+              <button class="btn ghost" id="ai-forget">Forget key</button>
+            </div>
+            <p class="status" id="ai-status" aria-live="polite"></p>
           </details>
 
           <div class="candidate" id="candidate-bar" hidden>
