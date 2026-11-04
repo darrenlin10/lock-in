@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parsePlanText } from '../src/plan-import.js';
+import { nearestAspectRatio, GEMINI_ASPECT_RATIOS } from '../src/ai.js';
 import { planningPrompt, sceneryPrompt, PLANNING_TEMPLATE } from '../src/prompts.js';
-import { nearestAspectRatio, resolveDevice, rectFor, clampRect, describeRect } from '../src/devices.js';
+import { resolveDevice, rectFor, clampRect, describeRect } from '../src/devices.js';
 import {
   defaultState,
   migrate,
@@ -53,8 +54,8 @@ test('prompts are filled from the verbatim templates', () => {
 });
 
 test('devices: aspect ratio, custom sizes, rect clamping', () => {
-  assert.equal(nearestAspectRatio(1179, 2556), '9:16');
-  assert.equal(nearestAspectRatio(1920, 1080), '16:9');
+  assert.equal(nearestAspectRatio(1179, 2556, GEMINI_ASPECT_RATIOS), '9:16');
+  assert.equal(nearestAspectRatio(1920, 1080, GEMINI_ASPECT_RATIOS), '16:9');
   const custom = resolveDevice({ deviceId: 'custom', customW: 2000, customH: 1000 });
   assert.equal(custom.group, 'Custom');
   assert.ok(custom.rect.w < 0.5); // landscape → computer-style default
@@ -69,9 +70,14 @@ test('migrate fills defaults, sanitises and never keeps an API key', () => {
   const s = migrate({ tasks: [{ title: 'x' }], display: { maxVisible: 99 }, gemini: { apiKey: 'secret', model: 'm' } });
   assert.equal(s.tasks.length, 1);
   assert.equal(s.display.maxVisible, 6);
-  assert.equal(s.gemini.apiKey, undefined);
-  assert.equal(s.gemini.model, 'm');
-  assert.equal(migrate(null).schema, 1);
+  assert.ok(!JSON.stringify(s).includes('secret'));
+  assert.equal(s.gemini, undefined);
+  assert.deepEqual(s.ai, { provider: 'gemini', models: { gemini: 'm' }, baseUrl: '', size: '' });
+  assert.equal(migrate(null).schema, 2);
+  const t = migrate({ ai: { provider: 'nope', models: { openai: 'gpt-image-1', bad: 5 }, apiKey: 'k2' } });
+  assert.equal(t.ai.provider, 'gemini');
+  assert.deepEqual(t.ai.models, { openai: 'gpt-image-1' });
+  assert.ok(!JSON.stringify(t).includes('k2'));
 });
 
 test('storage degrades gracefully when the backend throws', () => {

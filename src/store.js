@@ -11,7 +11,7 @@ import { localTimeZone, normalizeDeadline, isValidTimeString } from './dates.js'
 import { normalizeTask } from './tasks.js';
 
 export const STORAGE_KEY = 'lock-in:v1';
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 export const MAX_SNAPSHOTS = 20;
 
 export const CHALLENGE_STEPS = [
@@ -48,7 +48,9 @@ export function defaultState(now = new Date()) {
     snapshots: [],
     reminders: { time: '09:00', refresh: 'weekly', verified: {} },
     challenge: { steps: {}, notes: '' },
-    gemini: { model: 'gemini-2.5-flash-image' },
+    // Image generation: the user picks the provider/API and model.
+    // A model is remembered per provider. API keys are never stored.
+    ai: { provider: 'gemini', models: {}, baseUrl: '', size: '' },
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
   };
@@ -77,9 +79,19 @@ export function migrate(raw, now = new Date()) {
   if (!['none', 'daily', 'weekly'].includes(s.reminders.refresh)) s.reminders.refresh = 'weekly';
   s.reminders.verified = s.reminders.verified && typeof s.reminders.verified === 'object' ? s.reminders.verified : {};
   s.challenge = { ...base.challenge, ...(raw.challenge || {}) };
-  s.gemini = { ...base.gemini, ...(raw.gemini || {}) };
-  // Never persist a key, even if an old export contained one.
-  delete s.gemini.apiKey;
+  const rawAi = raw.ai && typeof raw.ai === 'object' ? raw.ai : {};
+  s.ai = {
+    provider: ['gemini', 'openai', 'compatible'].includes(rawAi.provider) ? rawAi.provider : 'gemini',
+    models: rawAi.models && typeof rawAi.models === 'object' ? { ...rawAi.models } : {},
+    baseUrl: typeof rawAi.baseUrl === 'string' ? rawAi.baseUrl : '',
+    size: typeof rawAi.size === 'string' ? rawAi.size : '',
+  };
+  // Schema 1 stored a single Gemini model ID.
+  if (raw.gemini?.model && !s.ai.models.gemini) s.ai.models.gemini = String(raw.gemini.model);
+  for (const k of Object.keys(s.ai.models)) if (typeof s.ai.models[k] !== 'string') delete s.ai.models[k];
+  // Never carry a key forward, even if an old or hand-edited backup contained one.
+  delete s.gemini;
+  delete s.ai.apiKey;
   return s;
 }
 

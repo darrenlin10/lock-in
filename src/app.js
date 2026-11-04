@@ -14,7 +14,7 @@ import {
   zonedWallTimeToInstant,
 } from './dates.js';
 import { createTask, displayLabel, progress, selectVisibleTasks, updateTask } from './tasks.js';
-import { DEVICES, CUSTOM_DEVICE_ID, resolveDevice, rectFor, rectKey, clampRect, describeRect, nearestAspectRatio } from './devices.js';
+import { DEVICES, CUSTOM_DEVICE_ID, resolveDevice, rectFor, rectKey, clampRect, describeRect } from './devices.js';
 import { planningPrompt, sceneryPrompt } from './prompts.js';
 import { parsePlanText } from './plan-import.js';
 import { buildIcs, buildReminderItems, googleCalendarUrl, isVerified } from './reminders.js';
@@ -31,7 +31,7 @@ import {
 } from './store.js';
 import { renderWallpaper, drawCover, PAPERS, FONTS } from './render/compositor.js';
 import { DESKS, LIGHTING, ACCESSORIES } from './render/backgrounds.js';
-import * as gemini from './gemini.js';
+import * as ai from './ai.js';
 import { putAsset, getAsset, clearAssets } from './idb.js';
 
 // ---------------------------------------------------------------- utilities
@@ -662,27 +662,78 @@ function initDesign() {
     }
   });
 
-  // BYOK
-  $('#gem-model').addEventListener('change', (e) => {
-    state.gemini.model = e.target.value.trim() || gemini.DEFAULT_IMAGE_MODEL;
+  // BYOK: the user picks the provider/API and the model.
+  $('#ai-provider').innerHTML = Object.values(ai.PROVIDERS)
+    .map((p) => `<option value="${p.id}">${esc(p.name)}</option>`)
+    .join('');
+  $('#ai-provider').addEventListener('change', (e) => {
+    state.ai.provider = e.target.value;
+    resetAiSession(`Switched to ${ai.PROVIDERS[state.ai.provider].name}. Enter a key for this provider.`);
     persist();
+    syncAiInputs();
   });
-  $('#gem-key').addEventListener('input', (e) => gemini.setApiKey(e.target.value));
-  $('#gem-forget').addEventListener('click', () => {
-    gemini.forgetApiKey();
-    $('#gem-key').value = '';
-    gemStatus('Key forgotten.', '');
-  });
-  $('#gem-verify').addEventListener('click', async () => {
-    gemStatus('Checking…', '');
+  $('#ai-base').addEventListener('change', (e) => {
+    const next = e.target.value.trim();
+    if (next === state.ai.baseUrl) return;
+    state.ai.baseUrl = next;
+    persist();
+    // A key entered for one endpoint is never sent to another.
+    resetAiSession('Base URL changed. Enter the key for this endpoint.');
     try {
-      const m = await gemini.verifyModel(state.gemini.model);
-      gemStatus(`Connected. ${m.displayName} is available to this key.`, 'ok');
+      if (next) ai.normalizeBaseUrl(next);
     } catch (err) {
-      gemStatus(err.message, 'bad');
+      aiStatus(err.message, 'bad');
     }
   });
-  $('#gem-generate').addEventListener('click', generateWithGemini);
+  $('#ai-key').addEventListener('input', (e) => ai.setApiKey(e.target.value));
+  $('#ai-model').addEventListener('input', (e) => {
+    state.ai.models[state.ai.provider] = e.target.value.trim();
+    persist();
+    const dev = device();
+    $('#ai-size').placeholder = `automatic (${ai.autoImageSize(currentModel() || '', dev.w, dev.h)})`;
+  });
+  $('#ai-size').addEventListener('change', (e) => {
+    const v = e.target.value.trim();
+    state.ai.size = v;
+    persist();
+    if (v && !ai.isValidSize(v)) aiStatus('Image size must look like 1024x1536. Leave it blank for automatic.', 'bad');
+    else aiStatus('', '');
+  });
+  $('#ai-show-all').addEventListener('change', renderModelPicker);
+  $('#ai-model-pick').addEventListener('change', (e) => {
+    if (!e.target.value) return;
+    state.ai.models[state.ai.provider] = e.target.value;
+    $('#ai-model').value = e.target.value;
+    persist();
+    aiStatus(`Model set to ${e.target.value}.`, 'ok');
+  });
+  $('#ai-load-models').addEventListener('click', async () => {
+    aiStatus('Loading models…', '');
+    try {
+      loadedModels = await ai.listModels(aiConfig());
+      renderModelPicker();
+      const images = loadedModels.filter((m) => m.image).length;
+      aiStatus(
+        images
+          ? `${plural(images, 'image model')} found (of ${loadedModels.length} total). Pick one below.`
+          : `${plural(loadedModels.length, 'model')} found, none named like an image model. Tick “Include non-image models” to see them all.`,
+        images ? 'ok' : '',
+      );
+    } catch (err) {
+      aiStatus(err.message, 'bad');
+    }
+  });
+  $('#ai-forget').addEventListener('click', () => resetAiSession('Key forgotten.'));
+  $('#ai-verify').addEventListener('click', async () => {
+    aiStatus('Checking…', '');
+    try {
+      const m = await ai.verifyModel(aiConfig());
+      aiStatus(`Connected. ${m.displayName} is available to this key.`, 'ok');
+    } catch (err) {
+      aiStatus(err.message, 'bad');
+    }
+  });
+  $('#ai-generate').addEventListener('click', generateWithAi);
   $('#candidate-accept').addEventListener('click', acceptCandidate);
   $('#candidate-discard').addEventListener('click', () => {
     candidate = null;
@@ -691,30 +742,76 @@ function initDesign() {
   });
 }
 
-function gemStatus(msg, kind) {
-  const el = $('#gem-status');
+let loadedModels = [];
+
+function currentModel() {
+  const saved = state.ai.models[state.ai.provider];
+  return saved !== undefined ? saved : ai.PROVIDERS[state.ai.provider].defaultModel;
+}
+
+function aiConfig() {
+  return { provider: state.ai.provider, model: currentModel(), baseUrl: state.ai.baseUrl, size: state.ai.size };
+}
+
+function resetAiSession(msg) {
+  ai.forgetApiKey();
+  $('#ai-key').value = '';
+  loadedModels = [];
+  renderModelPicker();
+  aiStatus(msg, '');
+}
+
+function syncAiInputs() {
+  const p = ai.PROVIDERS[state.ai.provider];
+  $('#ai-provider').value = p.id;
+  $('#ai-base-field').hidden = !p.customBaseUrl;
+  $('#ai-base').value = state.ai.baseUrl;
+  $('#ai-size-field').hidden = !p.sizeOption;
+  $('#ai-size').value = state.ai.size;
+  $('#ai-key-label').textContent = p.keyLabel;
+  $('#ai-key-hint').innerHTML = p.keyUrl
+    ? `${esc(p.keyHint)} <a href="${esc(p.keyUrl)}" target="_blank" rel="noopener">Get a key ↗</a>`
+    : `${esc(p.keyHint)} Your key is sent only to the base URL above.`;
+  $('#ai-model').value = currentModel();
+  $('#ai-model').placeholder = p.defaultModel ? `e.g. ${p.defaultModel}` : 'Type the model ID your endpoint expects';
+  const dev = device();
+  $('#ai-size').placeholder = `automatic (${ai.autoImageSize(currentModel() || '', dev.w, dev.h)})`;
+}
+
+function renderModelPicker() {
+  const field = $('#ai-model-pick-field');
+  const showAll = $('#ai-show-all').checked;
+  const list = loadedModels.filter((m) => showAll || m.image);
+  field.hidden = list.length === 0;
+  $('#ai-model-pick').innerHTML = list
+    .map((m) => `<option value="${esc(m.id)}" ${m.id === currentModel() ? 'selected' : ''}>${esc(m.displayName === m.id ? m.id : `${m.displayName} (${m.id})`)}</option>`)
+    .join('');
+}
+
+function aiStatus(msg, kind) {
+  const el = $('#ai-status');
   el.textContent = msg;
   el.className = `status ${kind}`;
 }
 
-async function generateWithGemini() {
-  if (!gemini.hasApiKey()) return gemStatus('Enter your Gemini API key first.', 'bad');
+async function generateWithAi() {
+  if (!ai.hasApiKey()) return aiStatus('Enter an API key for the selected provider first.', 'bad');
+  const cfg = aiConfig();
+  const provider = ai.PROVIDERS[cfg.provider];
   const dev = device();
-  const btn = $('#gem-generate');
+  const btn = $('#ai-generate');
   btn.disabled = true;
-  gemStatus('Generating scenery… this can take up to a minute.', '');
+  aiStatus(`Generating with ${provider.name} · ${cfg.model || '(no model)'}… this can take a minute.`, '');
   try {
-    const res = await gemini.generateScenery({
-      model: state.gemini.model,
-      prompt: $('#scenery-prompt').value,
-      aspectRatio: nearestAspectRatio(dev.w, dev.h),
-    });
+    if (cfg.size && !ai.isValidSize(cfg.size)) throw new ai.AiError('config', 'Image size must look like 1024x1536, or be blank.');
+    const res = await ai.generateImage(cfg, { prompt: $('#scenery-prompt').value, width: dev.w, height: dev.h });
     const image = await createImageBitmap(res.blob);
-    if (image.width < 256 || image.height < 256) throw new gemini.GeminiError('no-image', 'The returned image was too small to use.');
-    setCandidate({ image, blob: res.blob, source: 'gemini', label: `Gemini (${state.gemini.model})`, model: state.gemini.model });
-    gemStatus('Done. Review the preview and choose whether to use it.', 'ok');
+    if (image.width < 256 || image.height < 256) throw new ai.AiError('no-image', 'The returned image was too small to use.');
+    const label = `${provider.name.replace(/ \(custom URL\)$/, '')} · ${cfg.model}`;
+    setCandidate({ image, blob: res.blob, source: cfg.provider, label, model: cfg.model, provider: cfg.provider });
+    aiStatus('Done. Review the preview and choose whether to use it.', 'ok');
   } catch (err) {
-    gemStatus(err.message || 'Generation failed. Your current background is unchanged.', 'bad');
+    aiStatus(err.message || 'Generation failed. Your current background is unchanged.', 'bad');
   } finally {
     btn.disabled = false;
   }
@@ -723,7 +820,7 @@ async function generateWithGemini() {
 function setCandidate(c) {
   const dev = device();
   const guides = dev.guides.filter((g) => dev.h >= dev.w || g.label.includes('Clock'));
-  c.assessment = gemini.assessScenery(c.image, dev, guides, drawCover);
+  c.assessment = ai.assessScenery(c.image, dev, guides, drawCover);
   candidate = c;
   renderCandidate();
   schedulePreview();
@@ -746,7 +843,7 @@ async function acceptCandidate() {
   const c = candidate;
   const saved = await putAsset('bg-current', c.blob);
   bgImage = c.image;
-  state.design.background = { type: 'custom', assetId: 'bg-current', label: c.label, model: c.model };
+  state.design.background = { type: 'custom', assetId: 'bg-current', label: c.label, model: c.model, provider: c.provider || null };
   candidate = null;
   persist();
   syncDesignInputs();
@@ -784,7 +881,7 @@ function syncDesignInputs() {
   for (const cb of $$('#des-accessories input')) cb.checked = Boolean(d.accessories[cb.dataset.acc]);
   for (const r of $$('input[name="bg-type"]')) r.checked = r.value === d.background.type;
   $('#bundled-controls').hidden = d.background.type !== 'bundled';
-  $('#gem-model').value = state.gemini.model;
+  syncAiInputs();
   $('#bg-current').textContent =
     d.background.type === 'custom'
       ? bgImage
@@ -1050,6 +1147,7 @@ function initChallenge() {
       if (!confirm('Replace your current Lock-In data with this backup?')) return;
       state = migrate(raw);
       bgImage = null;
+      resetAiSession('');
       persist();
       syncAll();
       loadBackground();
@@ -1066,7 +1164,7 @@ function initChallenge() {
     if (!confirm('Erase all Lock-In data in this browser? This cannot be undone.')) return;
     storage.clear();
     await clearAssets();
-    gemini.forgetApiKey();
+    resetAiSession('');
     state = defaultState();
     bgImage = null;
     candidate = null;

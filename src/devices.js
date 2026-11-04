@@ -83,23 +83,6 @@ export function rectKey(device) {
   return device.id === CUSTOM_DEVICE_ID ? `custom-${device.w}x${device.h}` : device.id;
 }
 
-/** Nearest aspect ratio supported by Gemini image generation. */
-export const GEMINI_ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
-export function nearestAspectRatio(w, h, options = GEMINI_ASPECT_RATIOS) {
-  const target = Math.log(w / h);
-  let best = options[0];
-  let bestDiff = Infinity;
-  for (const opt of options) {
-    const [a, b] = opt.split(':').map(Number);
-    const diff = Math.abs(Math.log(a / b) - target);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      best = opt;
-    }
-  }
-  return best;
-}
-
 /** Plain-language description of the content rect, for the scenery prompt. */
 export function describeRect(r) {
   const pct = (v) => `${Math.round(v * 100)}%`;
