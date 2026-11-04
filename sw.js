@@ -1,0 +1,53 @@
+// Offline support: cache the app shell so bundled backgrounds, planning and
+// export keep working without a network connection (design doc §5.1).
+const CACHE = 'lock-in-v1';
+const SHELL = [
+  './',
+  'index.html',
+  'styles.css',
+  'manifest.webmanifest',
+  'icons/icon.svg',
+  'icons/icon-192.png',
+  'icons/icon-512.png',
+  'src/app.js',
+  'src/dates.js',
+  'src/tasks.js',
+  'src/layout.js',
+  'src/devices.js',
+  'src/prompts.js',
+  'src/plan-import.js',
+  'src/reminders.js',
+  'src/store.js',
+  'src/gemini.js',
+  'src/idb.js',
+  'src/render/compositor.js',
+  'src/render/backgrounds.js',
+];
+
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()),
+  );
+});
+
+// Network-first for same-origin GETs (so updates arrive), cache as fallback.
+// Cross-origin requests (Gemini API, Google Calendar) are never cached.
+self.addEventListener('fetch', (e) => {
+  const url = new URL(e.request.url);
+  if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  e.respondWith(
+    fetch(e.request)
+      .then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, copy));
+        }
+        return res;
+      })
+      .catch(() => caches.match(e.request, { ignoreSearch: true }).then((r) => r || caches.match('index.html'))),
+  );
+});
