@@ -1,0 +1,227 @@
+// Browser smoke test + documentation images (uses the pre-installed Playwright).
+//   npm run screenshots
+// - Loads the app with sample data at a fixed date/timezone.
+// - Fails on any console error or uncaught exception.
+// - Exercises add/complete task, design changes, export and reminders.
+// - Writes app screenshots, sample wallpapers and PNG icons.
+const { chromium, devices } = require('playwright');
+const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const root = path.resolve(__dirname, '..');
+const out = path.join(root, 'docs', 'images');
+fs.mkdirSync(out, { recursive: true });
+const FIXED_NOW = new Date('2026-11-04T10:00:00-08:00');
+const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
+
+function serve() {
+  return new Promise((resolve) => {
+    const srv = http.createServer((req, res) => {
+      let p = path.join(root, decodeURIComponent(new URL(req.url, 'http://x').pathname));
+      if (p.endsWith('/')) p = path.join(p, 'index.html');
+      fs.readFile(p, (err, body) => {
+        if (err) { res.writeHead(404); return res.end(); }
+        res.writeHead(200, { 'Content-Type': types[path.extname(p)] || 'application/octet-stream' });
+        res.end(body);
+      });
+    });
+    srv.listen(0, () => resolve(srv));
+  });
+}
+
+async function hideToast(page) {
+  await page.evaluate(() => (document.querySelector('#toast').hidden = true));
+}
+
+// Docs copies are downscaled JPEGs to keep the repo small; real exports are full-size PNGs.
+async function canvasPng(page, file) {
+  const data = await page.evaluate(() => {
+    const src = document.querySelector('#canvas');
+    const scale = Math.min(1, 1280 / Math.max(src.width, src.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(src.width * scale);
+    c.height = Math.round(src.height * scale);
+    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.86);
+  });
+  fs.writeFileSync(path.join(out, file), Buffer.from(data.split(',')[1], 'base64'));
+}
+
+(async () => {
+  const srv = await serve();
+  const base = `http://localhost:${srv.address().port}/`;
+  const browser = await chromium.launch();
+  const errors = [];
+  const check = (cond, msg) => { if (!cond) { errors.push(`ASSERT: ${msg}`); } };
+
+  // ---- Desktop run
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 2, timezoneId: 'America/Los_Angeles', locale: 'en-US', acceptDownloads: true });
+  const page = await ctx.newPage();
+  await page.clock.setFixedTime(FIXED_NOW);
+  // The mocked 429 below is an expected network error, not an app error.
+  page.on('console', (m) => m.type() === 'error' && !m.text().includes('429') && errors.push(`console: ${m.text()}`));
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  await page.goto(`${base}?sample#plan`);
+  await page.waitForFunction(() => window.__lockIn && window.__lockIn.lastRender);
+
+  const st = await page.evaluate(() => ({ dl: window.__lockIn.state.deadline, n: window.__lockIn.state.tasks.length, shown: window.__lockIn.lastRender.layout.shownItems, big: window.__lockIn.lastRender.content.big }));
+  check(st.n === 6, 'sample has 6 tasks');
+  check(st.shown === 3, 'three actions shown');
+  check(st.big === '30', `countdown is 30 (got ${st.big})`);
+
+  // Add then complete a task; completed task must leave the snapshot.
+  await page.fill('#task-new-title', 'Email advisor about demo slot');
+  await page.fill('#task-new-due', '2026-11-05');
+  await page.click('#task-add button[type=submit]');
+  let labels = await page.evaluate(() => window.__lockIn.lastRender.content.items.map((i) => i.label));
+  check(labels[0] === 'Email advisor about demo slot', `new earliest task shown first (${labels})`);
+  await page.locator('.task', { hasText: '' }).filter({ has: page.locator('input.t-title[value="Email advisor about demo slot"]') }).locator('.t-done').check();
+  await page.waitForTimeout(50);
+  labels = await page.evaluate(() => window.__lockIn.lastRender.content.items.map((i) => i.label));
+  check(!labels.includes('Email advisor about demo slot'), 'completed task removed from wallpaper');
+  await hideToast(page);
+  await page.screenshot({ path: path.join(out, 'app-plan.jpg'), type: 'jpeg', quality: 82 });
+
+  // Design tab
+  await page.click('.tab[data-tab=design]');
+  await page.waitForTimeout(100);
+  await hideToast(page);
+  await page.screenshot({ path: path.join(out, 'app-design.jpg'), type: 'jpeg', quality: 82 });
+  await canvasPng(page, 'wallpaper-iphone-walnut.jpg');
+
+  await page.selectOption('#des-desk', 'marble');
+  await page.selectOption('#des-paper', 'legal');
+  await page.selectOption('#des-font', 'sans');
+  await page.check('#des-accessories input[data-acc=plant]');
+  await page.waitForTimeout(100);
+  await canvasPng(page, 'wallpaper-iphone-marble-legal.jpg');
+
+  await page.selectOption('#des-desk', 'black');
+  await page.selectOption('#des-paper', 'dots');
+  await page.selectOption('#des-lighting', 'evening');
+  await page.selectOption('#des-font', 'serif');
+  await page.selectOption('#dev-select', 'pixel-9');
+  await page.waitForTimeout(100);
+  await canvasPng(page, 'wallpaper-pixel-black-evening.jpg');
+
+  await page.selectOption('#dev-select', 'macbook-air-13');
+  await page.selectOption('#des-desk', 'walnut');
+  await page.selectOption('#des-paper', 'cream');
+  await page.selectOption('#des-lighting', 'day');
+  await page.waitForTimeout(100);
+  await canvasPng(page, 'wallpaper-macbook-walnut.jpg');
+  const wl = await page.evaluate(() => window.__lockIn.lastRender.layout.warnings);
+  check(wl.length === 0, `no layout warnings on macbook (${JSON.stringify(wl)})`);
+
+  // Back to iPhone for export + install flow.
+  await page.selectOption('#dev-select', 'iphone-6.1');
+  await page.selectOption('#des-desk', 'walnut');
+  await page.click('.tab[data-tab=install]');
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#export-png')]);
+  check(/lock-in-capstone-final-report-1179x2556-as-of-2026-11-04\.png/.test(dl.suggestedFilename()), `export filename ${dl.suggestedFilename()}`);
+  check((await page.textContent('#wallpaper-pill')).includes('not confirmed'), 'exported != installed');
+  for (const c of await page.$$('.apply-check')) await c.check();
+  await page.click('#mark-applied');
+  check((await page.textContent('#wallpaper-pill')).includes('current'), 'marked installed');
+  // Editing a task makes the installed wallpaper stale.
+  await page.click('.tab[data-tab=plan]');
+  await page.locator('.task .t-label').first().fill('Confirm rubric ✓ today');
+  await page.waitForTimeout(50);
+  check((await page.textContent('#wallpaper-pill')).includes('out of date'), 'stale after edit');
+  await page.locator('.task .t-label').first().fill('Confirm rubric');
+  await page.waitForTimeout(50);
+  check((await page.textContent('#wallpaper-pill')).includes('current'), 'current again after reverting');
+  await page.click('.tab[data-tab=install]');
+  await hideToast(page);
+  await page.screenshot({ path: path.join(out, 'app-install.jpg'), type: 'jpeg', quality: 82 });
+
+  // Reminders
+  await page.click('.tab[data-tab=reminders]');
+  const remCount = await page.locator('.rem').count();
+  check(remCount === 8, `8 reminders (6 actions + deadline + refresh), got ${remCount}`);
+  const [ics] = await Promise.all([page.waitForEvent('download'), page.click('#rem-ics')]);
+  const icsText = fs.readFileSync(await ics.path(), 'utf8');
+  check(icsText.includes('BEGIN:VCALENDAR') && (icsText.match(/BEGIN:VEVENT/g) || []).length === 8, 'ics has 8 events');
+  await page.locator('.rem input[type=checkbox]').first().check();
+  await hideToast(page);
+  await page.screenshot({ path: path.join(out, 'app-reminders.jpg'), type: 'jpeg', quality: 82 });
+
+  // Persistence across reload
+  await page.reload();
+  await page.waitForFunction(() => window.__lockIn && window.__lockIn.lastRender);
+  const after = await page.evaluate(() => ({ n: window.__lockIn.state.tasks.length, snaps: window.__lockIn.state.snapshots.length }));
+  check(after.n === 7 && after.snaps === 1, `persisted after reload ${JSON.stringify(after)}`);
+
+  // Gemini BYOK: mocked API, verify request never contains task text or key in body.
+  let sentBody = '';
+  await page.route('https://generativelanguage.googleapis.com/**', async (route) => {
+    const req = route.request();
+    if (req.method() === 'GET') return route.fulfill({ json: { name: 'models/gemini-2.5-flash-image', displayName: 'Mock Image Model', supportedGenerationMethods: ['generateContent'] } });
+    sentBody = req.postData() || '';
+    const png = fs.readFileSync(path.join(out, 'wallpaper-pixel-black-evening.jpg')).toString('base64');
+    return route.fulfill({ json: { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/jpeg', data: png } }] } }] } });
+  });
+  await page.click('.tab[data-tab=design]');
+  await page.click('#scenery-card > summary');
+  await page.click('.byok > summary');
+  await page.fill('#gem-key', 'test-key-not-real');
+  await page.click('#gem-verify');
+  await page.waitForFunction(() => document.querySelector('#gem-status').textContent.includes('Connected'));
+  await page.click('#gem-generate');
+  await page.waitForFunction(() => !document.querySelector('#candidate-bar').hidden);
+  check(!/Capstone|rubric|outline|test-key/i.test(sentBody), 'Gemini request contains only the style prompt');
+  check(sentBody.includes('Do not draw paper, text'), 'scenery prompt sent');
+  await page.click('#candidate-discard');
+  const stored = await page.evaluate(() => JSON.stringify(localStorage));
+  check(!stored.includes('test-key-not-real'), 'API key never persisted');
+  // Error path keeps working state
+  await page.unroute('https://generativelanguage.googleapis.com/**');
+  await page.route('https://generativelanguage.googleapis.com/**', (r) => r.fulfill({ status: 429, json: { error: { status: 'RESOURCE_EXHAUSTED', message: 'quota' } } }));
+  await page.click('#gem-generate');
+  await page.waitForFunction(() => document.querySelector('#gem-status').textContent.includes('Quota'));
+
+  // Challenge tab
+  await page.click('.tab[data-tab=challenge]');
+  await hideToast(page);
+  await page.screenshot({ path: path.join(out, 'app-review.jpg'), type: 'jpeg', quality: 82 });
+
+  // Deadline tab hero shot
+  await page.click('.tab[data-tab=deadline]');
+  await hideToast(page);
+  await page.screenshot({ path: path.join(out, 'app-deadline.jpg'), type: 'jpeg', quality: 82 });
+
+  // Icons
+  const iconPage = await ctx.newPage();
+  for (const size of [192, 512]) {
+    await iconPage.setViewportSize({ width: size, height: size });
+    await iconPage.setContent(`<style>html,body{margin:0;background:transparent}</style><img src="${base}icons/icon.svg" width="${size}" height="${size}">`);
+    await iconPage.waitForTimeout(100);
+    await iconPage.screenshot({ path: path.join(root, 'icons', `icon-${size}.png`), omitBackground: true, scale: 'css' });
+  }
+  await ctx.close();
+
+  // ---- Mobile run
+  const mctx = await browser.newContext({ ...devices['iPhone 15'], timezoneId: 'America/Los_Angeles', locale: 'en-US' });
+  const m = await mctx.newPage();
+  await m.clock.setFixedTime(FIXED_NOW);
+  m.on('pageerror', (e) => errors.push(`mobile pageerror: ${e.message}`));
+  await m.goto(`${base}?sample#design`);
+  await m.waitForFunction(() => window.__lockIn && window.__lockIn.lastRender);
+  const overflowX = await m.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+  check(!overflowX, 'no horizontal scroll on phone');
+  await hideToast(m);
+  await m.screenshot({ path: path.join(out, 'app-mobile.jpg'), type: 'jpeg', quality: 82, fullPage: false });
+  await mctx.close();
+
+  await browser.close();
+  srv.close();
+  if (errors.length) {
+    console.error(errors.join('\n'));
+    process.exit(1);
+  }
+  console.log('Smoke test passed; images written to docs/images/');
+})().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
