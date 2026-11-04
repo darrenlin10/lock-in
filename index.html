@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Lock-In · Countdown Lock Screen Studio</title>
+  <meta name="description" content="Plan backward from one deadline with Gemini and turn it into a readable desk-and-paper countdown lock screen." />
+  <meta name="theme-color" content="#1f2a3a" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="icons/icon.svg" alt="" width="32" height="32" />
+      <div>
+        <h1>Lock-In</h1>
+        <p class="tagline">One deadline. A real plan. A lock screen you'll actually read.</p>
+      </div>
+    </div>
+    <div class="topbar-status">
+      <span id="storage-pill" class="pill" title="Where your data lives">Saved on this device</span>
+      <span id="wallpaper-pill" class="pill">No wallpaper exported yet</span>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Steps">
+    <button role="tab" class="tab" data-tab="deadline" aria-selected="true"><span class="num">1</span> Deadline</button>
+    <button role="tab" class="tab" data-tab="plan" aria-selected="false"><span class="num">2</span> Plan</button>
+    <button role="tab" class="tab" data-tab="design" aria-selected="false"><span class="num">3</span> Design</button>
+    <button role="tab" class="tab" data-tab="install" aria-selected="false"><span class="num">4</span> Install</button>
+    <button role="tab" class="tab" data-tab="reminders" aria-selected="false"><span class="num">5</span> Reminders</button>
+    <button role="tab" class="tab" data-tab="challenge" aria-selected="false"><span class="num">6</span> Review</button>
+  </nav>
+
+  <main class="layout">
+    <section class="editor">
+      <!-- 1. DEADLINE ------------------------------------------------------>
+      <div class="panel" data-panel="deadline" role="tabpanel">
+        <h2>Choose one deadline</h2>
+        <p class="hint">Pick a single deadline that matters. Lock-In keeps its exact date on the lock screen and counts remaining calendar days in the timezone you choose.</p>
+
+        <label class="field">
+          <span>Deadline title <small>(shown on the lock screen)</small></span>
+          <input id="dl-title" type="text" maxlength="80" placeholder="e.g. Capstone final report" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Goal <small>(for the Gemini planning prompt; not shown on the lock screen)</small></span>
+          <textarea id="dl-goal" rows="2" maxlength="600" placeholder="e.g. Submit a 20-page capstone report with a working demo"></textarea>
+        </label>
+
+        <fieldset class="field">
+          <legend>Deadline type</legend>
+          <div class="segmented">
+            <label><input type="radio" name="dl-kind" value="date" checked /> Date only</label>
+            <label><input type="radio" name="dl-kind" value="timed" /> Specific time</label>
+          </div>
+        </fieldset>
+
+        <div class="row">
+          <label class="field">
+            <span>Due date</span>
+            <input id="dl-date" type="date" />
+          </label>
+          <label class="field" id="dl-time-field" hidden>
+            <span>Due time</span>
+            <input id="dl-time" type="time" />
+          </label>
+        </div>
+        <label class="field">
+          <span>Timezone</span>
+          <select id="dl-tz"></select>
+        </label>
+
+        <div class="callout" id="dl-readout" aria-live="polite"></div>
+        <details class="explain">
+          <summary>How the countdown is calculated</summary>
+          <ul>
+            <li><strong>Date-only:</strong> remaining calendar days in the chosen timezone. Shows “Due today” on the date and “Overdue” after it.</li>
+            <li><strong>Specific time:</strong> stores the exact instant. Before it, shows calendar days left (or “Due today”). When the instant passes, shows “Overdue”.</li>
+            <li>Days are counted from calendar dates, not by dividing seconds by 86,400, so daylight-saving changes never shift the count.</li>
+            <li>A wallpaper is a snapshot, not a running timer. Every image carries an “As of” date and the exact due date.</li>
+          </ul>
+        </details>
+      </div>
+
+      <!-- 2. PLAN ---------------------------------------------------------->
+      <div class="panel" data-panel="plan" role="tabpanel" hidden>
+        <h2>Plan backward with Gemini</h2>
+        <p class="hint">Copy this prompt into Gemini, review the dates and workload it suggests, then paste the plan back here. Lock-In never treats Gemini's suggestions as scheduled or accepted until you add them.</p>
+
+        <label class="field">
+          <span>Available work time and constraints</span>
+          <textarea id="plan-capacity" rows="2" maxlength="600" placeholder="e.g. ~1.5 h on weekdays, free Saturdays, midterm on Nov 17"></textarea>
+        </label>
+        <label class="field">
+          <span>Planning prompt</span>
+          <textarea id="plan-prompt" rows="9" readonly></textarea>
+        </label>
+        <label class="check"><input type="checkbox" id="plan-format-hint" checked /> Ask Gemini for an import-friendly list (one line per action: date — action)</label>
+        <div class="buttons">
+          <button class="btn" id="plan-copy">Copy prompt</button>
+          <a class="btn" href="https://gemini.google.com/app" target="_blank" rel="noopener">Open Gemini ↗</a>
+        </div>
+
+        <h3>Paste the plan you accepted</h3>
+        <textarea id="plan-paste" rows="5" placeholder="2026-11-10 — Draft outline&#10;Nov 14: Collect sources&#10;- [ ] 11/30 Final review buffer"></textarea>
+        <div class="buttons"><button class="btn" id="plan-parse">Preview actions</button></div>
+        <div id="plan-import-preview"></div>
+
+        <h3>Actions <span class="muted" id="task-progress"></span></h3>
+        <p class="hint">The full title stays here. Add a <em>short label</em> when a title is too long for the lock screen. Pinned actions always show first; the rest are ordered by due date, then priority.</p>
+        <form id="task-add" class="task-add" autocomplete="off">
+          <input id="task-new-title" type="text" maxlength="200" placeholder="Add an action…" aria-label="New action title" required />
+          <input id="task-new-due" type="date" aria-label="Due date (optional)" />
+          <select id="task-new-priority" aria-label="Priority">
+            <option value="1">High</option>
+            <option value="2" selected>Medium</option>
+            <option value="3">Low</option>
+          </select>
+          <button class="btn primary" type="submit">Add</button>
+        </form>
+        <ul id="task-list" class="task-list"></ul>
+
+        <h3>On the lock screen</h3>
+        <div class="row">
+          <label class="field">
+            <span>Visible actions</span>
+            <input id="disp-max" type="number" min="1" max="6" step="1" />
+          </label>
+          <label class="field">
+            <span>Header label</span>
+            <input id="disp-eyebrow" type="text" maxlength="24" />
+          </label>
+          <label class="field">
+            <span>Actions label</span>
+            <input id="disp-section" type="text" maxlength="24" />
+          </label>
+        </div>
+        <p class="hint warn" id="disp-max-warn" hidden>More than three actions: check readability on the real device before keeping this.</p>
+        <label class="check"><input type="checkbox" id="disp-due" /> Show “by &lt;date&gt;” under each action</label>
+      </div>
+
+      <!-- 3. DESIGN -------------------------------------------------------->
+      <div class="panel" data-panel="design" role="tabpanel" hidden>
+        <h2>Design the lock screen</h2>
+
+        <h3>Device</h3>
+        <label class="field">
+          <span>Screen</span>
+          <select id="dev-select"></select>
+        </label>
+        <div class="row" id="dev-custom" hidden>
+          <label class="field"><span>Width (px)</span><input id="dev-w" type="number" min="320" max="8000" /></label>
+          <label class="field"><span>Height (px)</span><input id="dev-h" type="number" min="320" max="8000" /></label>
+        </div>
+        <p class="hint">Presets are starting points. Check your phone's actual resolution and adjust the paper so it clears your clock, widgets and notifications.</p>
+
+        <h3>Paper position</h3>
+        <div class="sliders">
+          <label>Left <input type="range" id="rect-x" min="0" max="85" step="0.5" /><output id="rect-x-out"></output></label>
+          <label>Top <input type="range" id="rect-y" min="0" max="85" step="0.5" /><output id="rect-y-out"></output></label>
+          <label>Width <input type="range" id="rect-w" min="15" max="100" step="0.5" /><output id="rect-w-out"></output></label>
+          <label>Height <input type="range" id="rect-h" min="15" max="100" step="0.5" /><output id="rect-h-out"></output></label>
+        </div>
+        <div class="buttons">
+          <button class="btn" id="rect-reset">Reset to preset</button>
+          <label class="check"><input type="checkbox" id="show-guides" checked /> Show clock &amp; shortcut guides in preview</label>
+        </div>
+
+        <h3>Style</h3>
+        <div class="row">
+          <label class="field"><span>Paper</span><select id="des-paper"></select></label>
+          <label class="field"><span>Typography</span><select id="des-font"></select></label>
+        </div>
+
+        <fieldset class="field">
+          <legend>Background</legend>
+          <div class="segmented">
+            <label><input type="radio" name="bg-type" value="bundled" checked /> Bundled desk</label>
+            <label><input type="radio" name="bg-type" value="custom" id="bg-type-custom" /> <span id="bg-custom-label">Gemini / uploaded scenery</span></label>
+          </div>
+        </fieldset>
+
+        <div id="bundled-controls">
+          <div class="row">
+            <label class="field"><span>Desk</span><select id="des-desk"></select></label>
+            <label class="field"><span>Lighting</span><select id="des-lighting"></select></label>
+          </div>
+          <fieldset class="field">
+            <legend>Accessories (kept outside the paper)</legend>
+            <div class="checks" id="des-accessories"></div>
+          </fieldset>
+        </div>
+
+        <details class="card" id="scenery-card">
+          <summary><strong>Use Gemini scenery</strong> <span class="muted">— optional</span></summary>
+          <p class="hint">Gemini generates the <em>desk only</em>. Lock-In draws the paper and every word at fixed coordinates, so dates and labels are always exactly right, and editing a task never needs another AI call.</p>
+          <label class="field">
+            <span>Scenery prompt (uses the desk, lighting and accessories above)</span>
+            <textarea id="scenery-prompt" rows="9" readonly></textarea>
+          </label>
+          <div class="buttons">
+            <button class="btn" id="scenery-copy">Copy prompt</button>
+            <a class="btn" href="https://gemini.google.com/app" target="_blank" rel="noopener">Open Gemini ↗</a>
+            <label class="btn file-btn">Upload image…<input type="file" id="bg-upload" accept="image/png,image/jpeg,image/webp" hidden /></label>
+          </div>
+          <p class="hint">No API key needed: generate the scenery in the Gemini app, download it, and upload it here. It is centre-cropped to your screen size.</p>
+
+          <details class="byok">
+            <summary>Or generate here with your own Gemini API key (BYOK)</summary>
+            <p class="hint">Your key stays in this tab's memory only. It is never saved, exported or sent anywhere except Google's Gemini API, and it's forgotten when you reload. Requests contain only the style prompt, never your tasks or deadline. Any charges go to the Google project that owns the key.</p>
+            <div class="row">
+              <label class="field"><span>API key</span><input id="gem-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste key from Google AI Studio" /></label>
+              <label class="field"><span>Image model ID</span><input id="gem-model" type="text" spellcheck="false" /></label>
+            </div>
+            <div class="buttons">
+              <button class="btn" id="gem-verify">Verify connection</button>
+              <button class="btn primary" id="gem-generate">Generate scenery</button>
+              <button class="btn ghost" id="gem-forget">Forget key</button>
+            </div>
+            <p class="status" id="gem-status" aria-live="polite"></p>
+          </details>
+
+          <div class="candidate" id="candidate-bar" hidden>
+            <p id="candidate-msg"></p>
+            <div class="buttons">
+              <button class="btn primary" id="candidate-accept">Use this background</button>
+              <button class="btn" id="candidate-discard">Discard</button>
+            </div>
+          </div>
+          <p class="hint" id="bg-current"></p>
+        </details>
+      </div>
+
+      <!-- 4. INSTALL ------------------------------------------------------->
+      <div class="panel" data-panel="install" role="tabpanel" hidden>
+        <h2>Export and install</h2>
+        <div class="callout" id="install-status"></div>
+
+        <div class="buttons">
+          <button class="btn primary" id="export-png">Download PNG</button>
+          <button class="btn" id="share-png" hidden>Share / Save to Photos</button>
+        </div>
+        <p class="hint">Exporting saves a file. It doesn't change your lock screen. Lock-In can't see your lock screen, so it only says a wallpaper is installed after you confirm it below.</p>
+
+        <div class="card" id="apply-card" hidden>
+          <h3>Confirm installation</h3>
+          <p class="hint">After setting the image as your lock screen, check it on the device:</p>
+          <label class="check"><input type="checkbox" class="apply-check" /> The clock and widgets don't cover the paper</label>
+          <label class="check"><input type="checkbox" class="apply-check" /> All text is readable at arm's length</label>
+          <label class="check"><input type="checkbox" class="apply-check" /> The countdown and dates are correct</label>
+          <div class="buttons"><button class="btn primary" id="mark-applied" disabled>I installed and checked it</button></div>
+        </div>
+
+        <h3>How to set it</h3>
+        <details class="explain"><summary>iPhone</summary>
+          <ol>
+            <li>Tap <em>Share / Save to Photos</em> (or download, then save the image to Photos).</li>
+            <li>Settings → Wallpaper → Add New Wallpaper → Photos, and pick the image. Or long-press the lock screen and tap “+”.</li>
+            <li>Keep the image unzoomed so the paper stays where you placed it. Choose “Set as Wallpaper Pair” or customise the lock screen only.</li>
+            <li>Check that clock style, widgets and notifications don't overlap the paper. If they do, adjust the paper position in step 3 and export again.</li>
+          </ol>
+        </details>
+        <details class="explain"><summary>Android</summary>
+          <ol>
+            <li>Download the PNG or tap <em>Share / Save to Photos</em>.</li>
+            <li>Open it in Photos/Gallery → ⋮ → <em>Use as</em> / <em>Set as wallpaper</em> → <em>Lock screen</em>. Labels vary by manufacturer.</li>
+            <li>Check the clock style and any lock-screen widgets against the paper.</li>
+          </ol>
+        </details>
+        <details class="explain"><summary>Mac</summary>
+          <ol>
+            <li>Choose a computer preset in step 3 that matches your display resolution.</li>
+            <li>System Settings → Wallpaper → Add Photo… and select the PNG. On recent macOS versions the lock screen uses the desktop wallpaper.</li>
+          </ol>
+        </details>
+        <details class="explain"><summary>Windows</summary>
+          <ol>
+            <li>Settings → Personalization → Lock screen → Personalize your lock screen → <em>Picture</em> → Browse photos.</li>
+            <li>The Windows clock sits at the lower left; keep the paper clear of it.</li>
+          </ol>
+        </details>
+
+        <h3>Snapshot history</h3>
+        <ul id="snapshot-list" class="snapshots"></ul>
+      </div>
+
+      <!-- 5. REMINDERS ----------------------------------------------------->
+      <div class="panel" data-panel="reminders" role="tabpanel" hidden>
+        <h2>Schedule reminders</h2>
+        <p class="hint">Lock-In builds a reminder schedule from your accepted plan. A suggestion isn't a reminder: add each entry to your calendar, then tick it once you've seen it there.</p>
+        <div class="row">
+          <label class="field"><span>Reminder time on action days</span><input id="rem-time" type="time" /></label>
+          <label class="field"><span>“Refresh wallpaper” reminder</span>
+            <select id="rem-refresh">
+              <option value="none">None</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+            </select>
+          </label>
+        </div>
+        <div class="buttons">
+          <button class="btn primary" id="rem-ics">Download .ics (all reminders, with alerts)</button>
+        </div>
+        <p class="hint">The .ics file imports into Google Calendar, Apple Calendar and Outlook and includes alerts. The per-item Google Calendar links open a prefilled event that uses your calendar's default notifications.</p>
+        <ul id="rem-list" class="rem-list"></ul>
+        <p class="callout" id="rem-summary"></p>
+      </div>
+
+      <!-- 6. CHALLENGE / REVIEW ------------------------------------------->
+      <div class="panel" data-panel="challenge" role="tabpanel" hidden>
+        <h2>Review progress</h2>
+        <div class="callout warn">
+          <strong>Verify before submitting.</strong> The submission deadline, required files and judging terms come from the signed-in Handshake mission. This app doesn't verify them.
+          See the public mission: <a href="https://joinhandshake.com/learn/your-deadline-your-design-create-a-countdown-lock-screen-e748e649/" target="_blank" rel="noopener">Your Deadline, Your Design ↗</a>
+        </div>
+        <ol id="challenge-steps" class="steps"></ol>
+        <label class="field">
+          <span>Notes (Gemini's contribution, refinements, how you use it)</span>
+          <textarea id="challenge-notes" rows="5" maxlength="4000"></textarea>
+        </label>
+
+        <h3>Your data</h3>
+        <p class="hint">Everything is stored in this browser only. Backups never include an API key.</p>
+        <div class="buttons">
+          <button class="btn" id="data-export">Export backup (.json)</button>
+          <label class="btn file-btn">Import backup…<input type="file" id="data-import" accept="application/json,.json" hidden /></label>
+          <button class="btn" id="data-sample">Load sample data</button>
+          <button class="btn danger" id="data-reset">Erase all data</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- PREVIEW ------------------------------------------------------------>
+    <aside class="preview" aria-label="Lock screen preview">
+      <div class="preview-head">
+        <strong>Preview</strong>
+        <span class="muted" id="preview-meta"></span>
+      </div>
+      <div class="frame-wrap">
+        <div class="frame" id="frame">
+          <canvas id="canvas" aria-label="Rendered lock screen" role="img"></canvas>
+          <div class="guides" id="guides" aria-hidden="true"></div>
+        </div>
+      </div>
+      <ul class="warnings" id="warnings" aria-live="polite"></ul>
+      <div class="buttons center">
+        <button class="btn primary" id="export-png-2">Download PNG</button>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="foot">
+    <p>Lock-In runs entirely in your browser. No account, no server, no tracking. <a href="https://github.com/darrenlin10/lock-in" target="_blank" rel="noopener">Source &amp; README</a></p>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
