@@ -17,7 +17,8 @@ const ANDROID_GUIDES = [
   { label: 'Clock', x: 0, y: 0, w: 1, h: 0.3 },
   { label: 'Shortcuts / fingerprint', x: 0, y: 0.86, w: 1, h: 0.14 },
 ];
-const COMPUTER_RECT = { x: 0.6, y: 0.14, w: 0.3, h: 0.7 };
+// Right of the centred macOS clock (x 30–70%), above Windows' bottom-left clock.
+const COMPUTER_RECT = { x: 0.72, y: 0.12, w: 0.25, h: 0.74 };
 const COMPUTER_GUIDES = [
   { label: 'Clock (macOS)', x: 0.3, y: 0, w: 0.4, h: 0.3 },
   { label: 'Clock (Windows)', x: 0, y: 0.7, w: 0.38, h: 0.3 },
@@ -44,6 +45,12 @@ export const DEVICES = [
 
 export const CUSTOM_DEVICE_ID = 'custom';
 
+// Largest canvas every target browser can allocate and export reliably.
+// iOS Safari refuses canvases above 16,777,216 pixels (4096×4096), and each
+// render needs a second same-size canvas for the desk texture.
+export const MAX_CANVAS_AREA = 16_777_216;
+export const MAX_CANVAS_SIDE = 8192;
+
 export function clampRect(r) {
   const c = (v, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : lo));
   const w = c(r.w, 0.15, 1);
@@ -57,13 +64,24 @@ export function clampRect(r) {
  */
 export function resolveDevice(design) {
   if (design.deviceId === CUSTOM_DEVICE_ID) {
-    const w = Math.round(Math.min(8000, Math.max(320, Number(design.customW) || 1179)));
-    const h = Math.round(Math.min(8000, Math.max(320, Number(design.customH) || 2556)));
+    let w = Math.min(MAX_CANVAS_SIDE, Math.max(320, Number(design.customW) || 1179));
+    let h = Math.min(MAX_CANVAS_SIDE, Math.max(320, Number(design.customH) || 2556));
+    let capped = w !== (Number(design.customW) || 1179) || h !== (Number(design.customH) || 2556);
+    if (w * h > MAX_CANVAS_AREA) {
+      // Scale down, keeping the aspect ratio, so the export still works on phones.
+      const k = Math.sqrt(MAX_CANVAS_AREA / (w * h));
+      w *= k;
+      h *= k;
+      capped = true;
+    }
+    w = Math.floor(w);
+    h = Math.floor(h);
     const portrait = h >= w;
     return {
       id: CUSTOM_DEVICE_ID,
       group: 'Custom',
       name: `Custom ${w}×${h}`,
+      capped,
       w,
       h,
       rect: portrait ? PHONE_RECT : COMPUTER_RECT,
@@ -88,3 +106,24 @@ export function describeRect(r) {
   const pct = (v) => `${Math.round(v * 100)}%`;
   return `rectangle from ${pct(r.x)} to ${pct(r.x + r.w)} of the width and ${pct(r.y)} to ${pct(r.y + r.h)} of the height`;
 }
+
+/**
+ * Pick the preset that matches this screen's physical pixels, or a custom
+ * size with the exact pixels when no preset matches. Used on first launch
+ * only; the user can always change it.
+ * @param {{width:number,height:number,dpr:number}} screen CSS size and devicePixelRatio
+ * @returns {{deviceId: string, customW?: number, customH?: number}}
+ */
+export function detectDevice({ width, height, dpr }) {
+  if (!(width > 0 && height > 0 && dpr > 0)) return { deviceId: DEVICES[0].id };
+  const short = Math.round(Math.min(width, height) * dpr);
+  const long = Math.round(Math.max(width, height) * dpr);
+  // Phones and tablets are used in portrait; computers in landscape.
+  const portrait = Math.min(width, height) < 600;
+  const [w, h] = portrait ? [short, long] : [long, short];
+  const exact = DEVICES.find((d) => d.w === w && d.h === h);
+  if (exact) return { deviceId: exact.id };
+  if (w < 320 || h < 320) return { deviceId: DEVICES[0].id };
+  return { deviceId: CUSTOM_DEVICE_ID, customW: w, customH: h };
+}
+

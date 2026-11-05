@@ -1,9 +1,10 @@
 // Offline support: cache the app shell so bundled backgrounds, planning and
 // export keep working without a network connection (design doc §5.1).
-const CACHE = 'lock-in-v2';
+const CACHE = 'lock-in-v3';
 const SHELL = [
   './',
   'index.html',
+  'selftest.html',
   'styles.css',
   'manifest.webmanifest',
   'icons/icon.svg',
@@ -19,6 +20,7 @@ const SHELL = [
   'src/reminders.js',
   'src/store.js',
   'src/ai.js',
+  'src/selftest.js',
   'src/idb.js',
   'src/render/compositor.js',
   'src/render/backgrounds.js',

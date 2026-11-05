@@ -19,15 +19,15 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - run: npm test
       - name: Assemble site
         run: |
           mkdir _site
-          cp -r index.html styles.css manifest.webmanifest sw.js src icons _site/
+          cp -r index.html selftest.html styles.css manifest.webmanifest sw.js src icons _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
       - id: deployment

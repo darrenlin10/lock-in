@@ -36,12 +36,24 @@ export function createTask(fields = {}, now = new Date()) {
   });
 }
 
+/** Truncate to at most `max` UTF-16 units without splitting a surrogate pair. */
+export function clip(text, max) {
+  const s = String(text);
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  return /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
+}
+
+// IDs end up in calendar UIDs and DOM attributes, so anything that isn't a
+// short plain token (e.g. from a hand-edited backup) is replaced.
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 export function normalizeTask(t) {
   const priority = [1, 2, 3].includes(Number(t?.priority)) ? Number(t.priority) : 2;
   return {
-    id: String(t?.id || newId()),
-    title: String(t?.title ?? '').trim(),
-    label: String(t?.label ?? '').trim(),
+    id: SAFE_ID.test(String(t?.id ?? '')) ? String(t.id) : newId(),
+    title: clip(String(t?.title ?? '').trim(), 200),
+    label: clip(String(t?.label ?? '').trim(), 60),
     done: Boolean(t?.done),
     priority,
     due: isValidDateString(t?.due) ? t.due : null,

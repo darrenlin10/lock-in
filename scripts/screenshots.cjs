@@ -64,6 +64,10 @@ async function canvasPng(page, file) {
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   await page.goto(`${base}?sample#plan`);
   await page.waitForFunction(() => window.__lockIn && window.__lockIn.lastRender);
+  // First launch auto-detects the screen (this desktop window); the docs
+  // images show the iPhone preset, so pick it explicitly.
+  await page.evaluate(() => { const sel = document.querySelector('#dev-select'); sel.value = 'iphone-6.1'; sel.dispatchEvent(new Event('change')); });
+  await page.waitForFunction(() => window.__lockIn.lastRender.device.id === 'iphone-6.1');
 
   const st = await page.evaluate(() => ({ dl: window.__lockIn.state.deadline, n: window.__lockIn.state.tasks.length, shown: window.__lockIn.lastRender.layout.shownItems, big: window.__lockIn.lastRender.content.big }));
   check(st.n === 6, 'sample has 6 tasks');
@@ -74,10 +78,12 @@ async function canvasPng(page, file) {
   await page.fill('#task-new-title', 'Email advisor about demo slot');
   await page.fill('#task-new-due', '2026-11-05');
   await page.click('#task-add button[type=submit]');
+  // The preview re-renders on the next animation frame; wait for it.
+  await page.waitForFunction(() => window.__lockIn.lastRender.content.items[0]?.label === 'Email advisor about demo slot', null, { timeout: 3000 }).catch(() => {});
   let labels = await page.evaluate(() => window.__lockIn.lastRender.content.items.map((i) => i.label));
   check(labels[0] === 'Email advisor about demo slot', `new earliest task shown first (${labels})`);
   await page.locator('.task', { hasText: '' }).filter({ has: page.locator('input.t-title[value="Email advisor about demo slot"]') }).locator('.t-done').check();
-  await page.waitForTimeout(50);
+  await page.waitForFunction(() => !window.__lockIn.lastRender.content.items.some((i) => i.label === 'Email advisor about demo slot'), null, { timeout: 3000 }).catch(() => {});
   labels = await page.evaluate(() => window.__lockIn.lastRender.content.items.map((i) => i.label));
   check(!labels.includes('Email advisor about demo slot'), 'completed task removed from wallpaper');
   await hideToast(page);
@@ -113,6 +119,12 @@ async function canvasPng(page, file) {
   await canvasPng(page, 'wallpaper-macbook-walnut.jpg');
   const wl = await page.evaluate(() => window.__lockIn.lastRender.layout.warnings);
   check(wl.length === 0, `no layout warnings on macbook (${JSON.stringify(wl)})`);
+  for (const dev of ['desktop-1080p', 'desktop-1440p', 'desktop-4k', 'macbook-pro-14', 'macbook-air-13']) {
+    await page.selectOption('#dev-select', dev);
+    await page.waitForFunction((d) => window.__lockIn.lastRender.device.id === d, dev);
+    const shown = await page.$$eval('#warnings li', (l) => l.map((x) => x.textContent));
+    check(shown.length === 0, `no preview warnings by default on ${dev} (${shown.join(' / ')})`);
+  }
 
   // Back to iPhone for export + install flow.
   await page.selectOption('#dev-select', 'iphone-6.1');
@@ -127,10 +139,10 @@ async function canvasPng(page, file) {
   // Editing a task makes the installed wallpaper stale.
   await page.click('.tab[data-tab=plan]');
   await page.locator('.task .t-label').first().fill('Confirm rubric ✓ today');
-  await page.waitForTimeout(50);
+  await page.waitForFunction((w) => document.querySelector('#wallpaper-pill').textContent.includes(w), 'out of date', { timeout: 3000 }).catch(() => {});
   check((await page.textContent('#wallpaper-pill')).includes('out of date'), 'stale after edit');
   await page.locator('.task .t-label').first().fill('Confirm rubric');
-  await page.waitForTimeout(50);
+  await page.waitForFunction((w) => document.querySelector('#wallpaper-pill').textContent.includes(w), 'current', { timeout: 3000 }).catch(() => {});
   check((await page.textContent('#wallpaper-pill')).includes('current'), 'current again after reverting');
   await page.click('.tab[data-tab=install]');
   await hideToast(page);
@@ -249,6 +261,38 @@ async function canvasPng(page, file) {
   await page.click('.tab[data-tab=deadline]');
   await hideToast(page);
   await page.screenshot({ path: path.join(out, 'app-deadline.jpg'), type: 'jpeg', quality: 82 });
+
+  // Robustness: clearing a task title must not wipe it.
+  await page.click('.tab[data-tab=plan]');
+  const firstTitle = page.locator('.task .t-title').first();
+  const original = await firstTitle.inputValue();
+  await firstTitle.fill('');
+  await firstTitle.blur();
+  check((await firstTitle.inputValue()) === original, 'clearing a title restores it on blur');
+
+  // Robustness: oversized custom screens are scaled to an exportable size.
+  await page.click('.tab[data-tab=design]');
+  await page.selectOption('#dev-select', 'custom');
+  await page.fill('#dev-w', '8000'); await page.dispatchEvent('#dev-w', 'change');
+  await page.fill('#dev-h', '8000'); await page.dispatchEvent('#dev-h', 'change');
+  await page.waitForTimeout(300);
+  const cw = await page.evaluate(() => [document.querySelector('#canvas').width, document.querySelector('#canvas').height]);
+  check(cw[0] * cw[1] <= 16777216 && !(await page.isHidden('#dev-capped')), `custom size capped (${cw})`);
+  await page.selectOption('#dev-select', 'iphone-6.1');
+
+  // Robustness: corrupted saved data still opens the app.
+  const junkCtx = await browser.newContext();
+  const junkPage = await junkCtx.newPage();
+  junkPage.on('pageerror', (e) => errors.push(`junk pageerror: ${e.message}`));
+  await junkPage.addInitScript(() => {
+    if (sessionStorage.getItem('seeded')) return;
+    sessionStorage.setItem('seeded', '1');
+    localStorage.setItem('lock-in:v1', JSON.stringify({ display: { eyebrow: 5 }, challenge: { steps: null }, snapshots: [null], tasks: [{ title: 'A', order: 0 }, { title: 'B', order: 0 }] }));
+  });
+  await junkPage.goto(`${base}#challenge`);
+  await junkPage.waitForFunction(() => window.__lockIn && window.__lockIn.lastRender);
+  await junkPage.click('.tab[data-tab=install]');
+  await junkCtx.close();
 
   // Icons
   const iconPage = await ctx.newPage();

@@ -203,6 +203,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .rem .when { color: var(--muted); font-size: .88rem; }
 .rem .rem-actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .rem.verified { border-color: var(--ok-border); }
+.rem.past { opacity: .6; }
+.load-error { max-width: 1240px; margin: 16px auto 0; }
 
 /* Challenge steps */
 .steps { padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: .5rem; counter-reset: step; }
@@ -242,4 +244,5 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #1d2330; color: #fff;
   padding: .6rem 1rem; border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.3); z-index: 20; max-width: calc(100vw - 32px);
+  pointer-events: none; /* never block the buttons underneath */
 }

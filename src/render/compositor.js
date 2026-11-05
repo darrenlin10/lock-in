@@ -9,7 +9,7 @@
 // where an image model happened to put a sheet of paper.
 
 import { computeSheetLayout } from '../layout.js';
-import { deskTexture, drawAccessories, drawLighting, mulberry32 } from './backgrounds.js';
+import { deskTexture, drawAccessories, drawLighting, freeCanvas, makeCanvas, mulberry32 } from './backgrounds.js';
 
 export const PAPERS = {
   white: { name: 'Crisp White Cardstock', fill: '#fbfbf8', ink: '#1b2230', muted: '#555d6b', accent: '#1f3a8a' },
@@ -174,6 +174,33 @@ function drawOps(ctx, ops, paperKey, family) {
   ctx.restore();
 }
 
+// One cached background layer: desk texture + accessories + lighting, or the
+// cover-cropped custom image. Rebuilt only when its inputs change.
+let bgCache = { key: null, canvas: null };
+function backgroundLayer(w, h, paperRect, design, image) {
+  const key = image
+    ? `img|${w}|${h}`
+    : `desk|${design.desk}|${design.lighting}|${JSON.stringify(design.accessories || {})}|${w}|${h}|${paperRect.x},${paperRect.y},${paperRect.w},${paperRect.h}`;
+  if (bgCache.key === key && bgCache.image === image && bgCache.canvas) return bgCache.canvas;
+  let c = bgCache.canvas;
+  if (!c || c.width !== w || c.height !== h) {
+    freeCanvas(c); // release the old size's memory right away (iOS Safari budget)
+    c = makeCanvas(w, h);
+  }
+  const bctx = c.getContext('2d');
+  bctx.setTransform(1, 0, 0, 1, 0, 0);
+  bctx.clearRect(0, 0, w, h);
+  if (image) {
+    drawCover(bctx, image, w, h);
+  } else {
+    bctx.drawImage(deskTexture(design.desk, w, h), 0, 0);
+    drawAccessories(bctx, w, h, paperRect, design.accessories || {});
+    drawLighting(bctx, w, h, design.lighting);
+  }
+  bgCache = { key, image, canvas: c };
+  return c;
+}
+
 /**
  * Render a complete wallpaper into `canvas` (resized to the device).
  * @param {HTMLCanvasElement|OffscreenCanvas} canvas
@@ -187,8 +214,14 @@ function drawOps(ctx, ops, paperKey, family) {
  */
 export function renderWallpaper(canvas, { size, rect, design, backgroundImage, content }) {
   const { w, h } = size;
-  if (canvas.width !== w) canvas.width = w;
-  if (canvas.height !== h) canvas.height = h;
+  if (canvas.width !== w || canvas.height !== h) {
+    // Collapse first: setting width then height separately would briefly
+    // allocate new-width × old-height, which can exceed iOS Safari's
+    // 16.7-megapixel canvas limit and break the canvas.
+    canvas.width = 0;
+    canvas.height = h;
+    canvas.width = w;
+  }
   const ctx = canvas.getContext('2d');
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, w, h);
@@ -202,20 +235,20 @@ export function renderWallpaper(canvas, { size, rect, design, backgroundImage, c
   const family = (FONTS[design.font] || FONTS.serif).stack;
   const layout = computeSheetLayout({ rect: paperRect, canvas: { w, h }, content, measure: makeMeasure(ctx, family) });
 
-  // 1. Background
-  if (backgroundImage) {
-    drawCover(ctx, backgroundImage, w, h);
-  } else {
-    ctx.drawImage(deskTexture(design.desk, w, h), 0, 0);
-    drawAccessories(ctx, w, h, paperRect, design.accessories || {});
-    drawLighting(ctx, w, h, design.lighting);
-  }
+  // 1. Background (cached: typing only changes the paper and text)
+  ctx.drawImage(backgroundLayer(w, h, paperRect, design, backgroundImage), 0, 0);
 
   // 2. Paper
   drawPaper(ctx, paperRect, design.paper, layout.bodyPx, design.lighting, Math.min(w, h));
 
-  // 3. Text and checkboxes
+  // 3. Text and checkboxes, clipped to the paper so nothing can ever spill
+  //    onto the desk, even in pathological sizes.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(paperRect.x, paperRect.y, paperRect.w, paperRect.h);
+  ctx.clip();
   drawOps(ctx, layout.ops, design.paper, family);
+  ctx.restore();
 
   return { ...layout, paperRect };
 }

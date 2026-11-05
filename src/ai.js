@@ -343,8 +343,9 @@ export function assessScenery(image, size, guides, drawCover) {
   const scale = 120 / Math.max(size.w, size.h);
   const w = Math.max(8, Math.round(size.w * scale));
   const h = Math.max(8, Math.round(size.h * scale));
-  const c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h });
-  const ctx = c.getContext('2d', { willReadFrequently: true });
+  let ctx = null;
+  if (typeof OffscreenCanvas !== 'undefined') ctx = new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true });
+  if (!ctx) ctx = Object.assign(document.createElement('canvas'), { width: w, height: h }).getContext('2d', { willReadFrequently: true });
   drawCover(ctx, image, w, h);
   const busyRegions = [];
   for (const g of guides) {

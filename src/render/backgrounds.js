@@ -30,8 +30,16 @@ export function mulberry32(seed) {
   };
 }
 
-function makeCanvas(w, h) {
-  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
+/** Offscreen canvas with a working 2D context (older Safari lacks one). */
+export function makeCanvas(w, h) {
+  if (typeof OffscreenCanvas !== 'undefined') {
+    try {
+      const oc = new OffscreenCanvas(w, h);
+      if (oc.getContext('2d')) return oc;
+    } catch {
+      /* fall through */
+    }
+  }
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
@@ -194,20 +202,34 @@ function drawMarble(ctx, w, h, rand) {
 const DRAWERS = { walnut: drawWalnut, black: drawBlack, marble: drawMarble };
 const SEEDS = { walnut: 1031, black: 2207, marble: 4409 };
 
-const textureCache = new Map();
+/**
+ * Release a canvas's pixel memory now. iOS Safari counts every canvas
+ * against a fixed budget (~384 MB) until it is garbage-collected, so canvases
+ * we stop using are shrunk to 0×0 immediately.
+ */
+export function freeCanvas(c) {
+  if (!c) return;
+  try {
+    c.width = 0;
+    c.height = 0;
+  } catch {
+    /* ignore */
+  }
+}
+
+// Only the texture in use is kept. Regenerating one takes ~100–300 ms, which
+// is fine on a style change and keeps memory to a single full-size canvas.
+let textureCache = { key: null, canvas: null };
 
 /** Cached desk texture canvas for `desk` at w×h. */
 export function deskTexture(desk, w, h) {
   const key = `${desk}|${w}|${h}`;
-  let c = textureCache.get(key);
-  if (!c) {
-    c = makeCanvas(w, h);
-    const ctx = c.getContext('2d');
-    (DRAWERS[desk] || drawWalnut)(ctx, w, h, mulberry32(SEEDS[desk] || 1));
-    // Keep at most one texture per desk style.
-    for (const k of textureCache.keys()) if (k.startsWith(`${desk}|`)) textureCache.delete(k);
-    textureCache.set(key, c);
-  }
+  if (textureCache.key === key && textureCache.canvas) return textureCache.canvas;
+  freeCanvas(textureCache.canvas);
+  const c = makeCanvas(w, h);
+  const ctx = c.getContext('2d');
+  (DRAWERS[desk] || drawWalnut)(ctx, w, h, mulberry32(SEEDS[desk] || 1));
+  textureCache = { key, canvas: c };
   return c;
 }
 
@@ -360,8 +382,14 @@ export function drawAccessories(ctx, w, h, paper, accessories) {
   if (accessories.pen) {
     const length = Math.min(paper.h * 0.62, 620 * s);
     // Centre the pen in the left margin; if the margin is narrow it peeks in from the edge.
-    const cx = Math.min(leftMargin - gap - 18 * s, leftMargin / 2 + 4 * s);
-    drawPen(ctx, cx, paper.y + paper.h * 0.42, length, 0.06, s);
+    if (w > h) {
+      // Computer screens: lie the pen beside the paper and low, away from the
+      // centred clock (macOS) at the top.
+      drawPen(ctx, paper.x - gap - 70 * s, paper.y + paper.h * 0.62, length, 0.06, s);
+    } else {
+      const cx = Math.min(leftMargin - gap - 18 * s, leftMargin / 2 + 4 * s);
+      drawPen(ctx, cx, paper.y + paper.h * 0.42, length, 0.06, s);
+    }
   }
   if (accessories.cup) {
     const r = Math.min(150 * s, Math.max(70 * s, (rightMargin - gap) / 0.62));

@@ -22,23 +22,38 @@ const PATTERNS = [
     re: new RegExp(`${WEEKDAY_RE}\\b${MONTH_RE}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:,?\\s+(\\d{4}))?`, 'i'),
     get: (m) => [m[3] || null, MONTHS.indexOf(m[1].slice(0, 3).toLowerCase()) + 1, m[2]],
   },
-  { re: new RegExp(`${WEEKDAY_RE}\\b(\\d{1,2})/(\\d{1,2})(?:/(\\d{2,4}))?\\b`, 'i'), get: (m) => [m[3] || null, m[1], m[2]] },
+  {
+    // US month/day. Fractions like "1/2 of the draft" or "chapter 3/4" are not
+    // dates, so a bare M/D only counts at the start of the item, before a
+    // separator, or after "by/due/on/until".
+    re: new RegExp(`${WEEKDAY_RE}\\b(\\d{1,2})/(\\d{1,2})(?:/(\\d{2,4}))?\\b`, 'i'),
+    get: (m) => [m[3] || null, m[1], m[2]],
+    accept: (line, m) => {
+      const before = line.slice(0, m.index).replace(LIST_MARKER_SRC, '');
+      const after = line.slice(m.index + m[0].length);
+      return Boolean(m[3]) || !before.trim() || /^\s*[:\-–—|)]/.test(after) || /\b(by|due|on|until|before)\s*$/i.test(before);
+    },
+  },
 ];
 
 const LIST_MARKER = /^\s*(?:[-*•+]|\d+[.)]|\[[ xX]?\]|step\s+\d+[:.)]?)\s*/i;
+const LIST_MARKER_SRC = /^\s*(?:(?:[-*•+]|\d+[.)]|\[[ xX]?\]|step\s+\d+[:.)]?|\|)\s*)*/i;
 
 function inferYear(month, day, today) {
+  // The first year (this one or the next) in which the date exists and is no
+  // more than ~2 months in the past. Handles Feb 29 in a non-leap year.
   const y = Number(today.slice(0, 4));
-  const candidate = `${y}-${pad2(month)}-${pad2(day)}`;
-  if (!isValidDateString(candidate)) return null;
-  // Dates more than ~2 months in the past are assumed to be next year.
-  return calendarDaysBetween(addDays(today, -60), candidate) < 0 ? y + 1 : y;
+  for (const year of [y, y + 1, y + 2, y + 3, y + 4]) {
+    const candidate = `${year}-${pad2(month)}-${pad2(day)}`;
+    if (isValidDateString(candidate) && calendarDaysBetween(addDays(today, -60), candidate) >= 0) return year;
+  }
+  return null;
 }
 
 function extractDate(line, today) {
-  for (const { re, get } of PATTERNS) {
+  for (const { re, get, accept } of PATTERNS) {
     const m = line.match(re);
-    if (!m) continue;
+    if (!m || (accept && !accept(line, m))) continue;
     let [y, mo, d] = get(m);
     mo = Number(mo);
     d = Number(d);
@@ -58,6 +73,7 @@ function cleanTitle(s) {
     .replace(/^[\s\-–—:|,.>]+/, '')
     .replace(/[\s\-–—:|,]+$/, '')
     .replace(/^(?:by|due|on|until)\b[\s:]*/i, '')
+    .replace(/\s+(?:by|due|on|until|before)$/i, '')
     .replace(/\s{2,}/g, ' ')
     .trim()
     .slice(0, 200);

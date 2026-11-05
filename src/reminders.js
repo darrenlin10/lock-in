@@ -30,7 +30,7 @@ export function buildReminderItems(deadline, tasks, { time = '09:00', refresh = 
     if (!t.due) continue;
     const start = zonedWallTimeToInstant(t.due, time, tz);
     items.push({
-      uid: `task-${t.id}@lock-in`,
+      uid: `task-${String(t.id).replace(/[^A-Za-z0-9_-]/g, '')}@lock-in`,
       kind: 'action',
       title: displayLabel(t),
       description: `${t.title}\nPart of: ${deadlineName}`,
@@ -79,7 +79,9 @@ export function buildReminderItems(deadline, tasks, { time = '09:00', refresh = 
     }
   }
 
-  return items.map((it) => ({ ...it, sig: signature(it) }));
+  // Reminders whose time has already passed can't remind anyone: they are
+  // flagged, left out of the .ics file and not counted as outstanding.
+  return items.map((it) => ({ ...it, past: !it.rrule && it.start.getTime() < now.getTime(), sig: signature(it) }));
 }
 
 export function signature(item) {

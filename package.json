@@ -11,6 +11,9 @@
   "scripts": {
     "start": "node scripts/serve.js",
     "test": "node --test tests/*.test.js",
+    "test:browser": "node scripts/screenshots.cjs",
+    "test:compat": "node scripts/compat-test.cjs",
+    "test:live": "node scripts/live-api-test.cjs",
     "screenshots": "node scripts/screenshots.cjs"
   }
 }
