@@ -98,23 +98,29 @@ function offsetMs(instantMs, timeZone) {
 
 /**
  * Convert a wall-clock date + time in `timeZone` to an absolute instant.
- * For times skipped by a DST jump, the result lands just after the gap;
- * for repeated times, the earlier occurrence is used.
+ * Matches the "compatible" rule used by Temporal and most calendar apps:
+ * - a time repeated by a DST fall-back resolves to the earlier occurrence;
+ * - a time skipped by a DST jump (e.g. 02:30 when clocks go 02:00 → 03:00)
+ *   moves forward by the length of the gap (03:30), never backwards, so a
+ *   deadline is never earlier than the user asked for.
  */
 export function zonedWallTimeToInstant(dateStr, timeStr, timeZone) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const [hh, mm] = timeStr.split(':').map(Number);
   const guess = Date.UTC(y, m - 1, d, hh, mm, 0);
-  const off1 = offsetMs(guess, timeZone);
-  let result = guess - off1;
-  const off2 = offsetMs(result, timeZone);
-  if (off2 !== off1) {
-    const alt = guess - off2;
-    // Prefer the candidate whose wall time round-trips; otherwise the earlier one.
-    const back = zonedParts(new Date(alt), timeZone);
-    result = back.hour === hh && back.minute === mm ? alt : Math.min(result, alt);
-  }
-  return new Date(result);
+  const roundTrips = (t) => {
+    const p = zonedParts(new Date(t), timeZone);
+    return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, 0) === guess;
+  };
+  // The offset just before and just after the requested wall time covers
+  // every DST transition (they are at most a day apart).
+  const offBefore = offsetMs(guess - DAY_MS, timeZone);
+  const offAfter = offsetMs(guess + DAY_MS, timeZone);
+  const candidates = [...new Set([guess - offBefore, guess - offAfter, guess - offsetMs(guess, timeZone)])].filter(roundTrips);
+  if (candidates.length) return new Date(Math.min(...candidates));
+  // In a gap: interpret with the pre-transition offset, which lands the same
+  // distance past the gap as the requested time was into it.
+  return new Date(guess - offBefore);
 }
 
 /** Normalise a deadline record and attach its absolute instant when timed. */

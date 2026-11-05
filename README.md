@@ -50,7 +50,7 @@ The mission names three learning outcomes. Lock-In treats all three as product f
 |---|---|
 | **Backward planning with Gemini** | Tab 2 builds the planning prompt from your goal, deadline, timezone, today's date and your constraints. It asks Gemini for a dated plan with a review buffer, for missing information instead of invented commitments, and for three short lock-screen labels. Paste the reply back and Lock-In parses the dates (ISO, "Nov 12", "11/12", tables, checklists). You review every action before it's added. |
 | **Lock-screen design formatted for a device** | Real pixel dimensions for 15 phone and computer presets plus custom sizes. A calibratable paper rectangle, clock/shortcut guide overlays and overlap warnings. Text is drawn by the app at fixed coordinates, so every date and label is exactly right. |
-| **Reminder scheduling** | Tab 5 turns the accepted plan into reminders: one per dated action, the deadline itself with a 24-hour alert, and an optional "refresh your wallpaper" repeat. Export as `.ics` (with alerts) or open prefilled Google Calendar events. A reminder only counts once you tick *Seen in my calendar*. If the plan changes afterwards, that tick is invalidated. |
+| **Reminder scheduling** | Tab 5 turns the accepted plan into reminders: one per dated action, the deadline itself with a 24-hour alert, and an optional "refresh your wallpaper" repeat. Export as `.ics` (with alerts) or open prefilled Google Calendar events. A reminder only counts once you tick *Seen in my calendar*. If the plan changes afterwards, that tick is invalidated. Reminders whose time has already passed are marked as such and left out of the calendar file, and the app warns about actions due after the deadline. |
 
 ### Where Gemini is used, honestly
 
@@ -70,6 +70,7 @@ Why Gemini doesn't draw the text: image models can't guarantee correct dates, co
 - *Date-only* deadlines count remaining **calendar days in the chosen timezone**: "Due today" on the date, "Overdue" after it.
 - *Timed* deadlines store the exact instant and a display timezone, and become "Overdue" the moment it passes.
 - Days are computed from calendar dates, never by dividing seconds by 86,400, so daylight-saving changes can't cause off-by-one errors. Unit tests cover the 2026 US DST transitions.
+- A due time that doesn't exist on a daylight-saving day (e.g. 2:30 AM when clocks jump to 3:00) moves forward to 3:30, never earlier.
 
 **Which actions appear.** Pinned actions come first, in your order, and are never silently replaced. The rest are ordered by due date (earliest first, undated last), then priority, then manual order. Completed actions drop off the next export.
 
@@ -78,6 +79,8 @@ Why Gemini doesn't draw the text: image models can't guarantee correct dates, co
 - It may shrink only down to a minimum readable size: 3.6% of the screen's short side on phones (about 14 pt on an iPhone) and 2.2% on computers.
 - Labels wrap to two lines at most. Anything longer is ellipsised and flagged so you can write a short label; the full title stays in your plan.
 - If content still doesn't fit, trailing actions move into "+N more" instead of the text getting smaller.
+- Nothing is ever drawn outside the paper. On a very small paper, the "LOCK-IN" mark is dropped before the required "As of" date, and the preview explains what to change.
+- Custom screen sizes are capped at 16.7 megapixels (about 4096×4096), keeping their shape, because iPhone Safari can't create or export a larger image.
 
 **Truthful state** (`src/store.js`). Lock-In tracks *generated → exported → installed* separately. A web page can't see your lock screen, so "installed" is only recorded after you confirm it, with a three-point on-device checklist. The app then compares a hash of what's on the image against what *would* be on it now. It tells you when the installed wallpaper is out of date because of a changed plan or a midnight rollover. It never claims to be "synced".
 
@@ -130,8 +133,13 @@ The doc's §3.2, §3.3, §4.2, §4.3 and §5.1 rules (content limits, countdown 
 ## What was and wasn't verified
 
 **Verified in this repository:**
-- `npm test`: 43 unit tests covering countdown/DST semantics, task selection, layout limits (minimum size, overflow, ellipsis, bounds), plan parsing, prompt templates, `.ics` generation (RFC 5545 escaping and 75-octet folding), Google Calendar links, storage fallback, snapshot state, and the image-provider client (request shapes per provider and model, model listing, base-URL validation, key handling and error mapping) against mocked APIs.
-- `npm run screenshots`: a headless-Chromium end-to-end run. It loads sample data at a fixed date, adds and completes a task, changes design, exports a PNG, confirms installation, checks the out-of-date detection, downloads the `.ics`, reloads to check persistence, and exercises the BYOK flow against **mocked** Gemini, Imagen and OpenAI APIs: loading and picking a model, verifying, generating, and switching provider. It checks that requests contain no task text, that each key goes only to its own provider, that switching provider clears the key, that keys never reach storage, that insecure custom URLs are refused, that a 429 keeps the current background, and that phone width has no horizontal scroll. It writes the images in `docs/images/`.
+- `npm test`: 55 unit tests covering countdown/DST semantics, task selection, layout limits (minimum size, overflow, ellipsis, bounds), plan parsing, prompt templates, `.ics` generation (RFC 5545 escaping and 75-octet folding), Google Calendar links, storage fallback, snapshot state, and the image-provider client (request shapes per provider and model, model listing, base-URL validation, key handling and error mapping) against mocked APIs. `tests/stress.test.js` adds regression tests from stress testing:
+  - randomized layouts (emoji, CJK, Arabic, 5,000-character words, tiny and huge papers) never draw outside the paper or split an emoji;
+  - corrupted or hostile backups always load;
+  - calendar files can't be injected through task text or IDs;
+  - daylight-saving gaps resolve forward;
+  - fractions like "1/2 of the draft" aren't read as dates.
+- `npm run screenshots`: a headless-Chromium end-to-end run. It loads sample data at a fixed date, adds and completes a task, changes design, exports a PNG, confirms installation, checks the out-of-date detection, downloads the `.ics`, reloads to check persistence, and exercises the BYOK flow against **mocked** Gemini, Imagen and OpenAI APIs: loading and picking a model, verifying, generating, and switching provider. It checks that requests contain no task text, that each key goes only to its own provider, that switching provider clears the key, that keys never reach storage, that insecure custom URLs are refused, that a 429 keeps the current background, that phone width has no horizontal scroll, that clearing a task title doesn't erase it, that oversized custom screens are scaled down, and that corrupted saved data still opens the app. It writes the images in `docs/images/`.
 
 **Not verified here (please check before relying on them):**
 - **Live API calls.** No real Gemini, OpenAI or third-party endpoint was called; request formats follow each provider's documented API. Model availability and pricing change, so use *Load available models* and *Verify connection*. Some third-party endpoints don't allow browser requests (CORS); Lock-In reports that clearly when it happens.

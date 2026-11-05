@@ -30,8 +30,16 @@ export function mulberry32(seed) {
   };
 }
 
-function makeCanvas(w, h) {
-  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
+/** Offscreen canvas with a working 2D context (older Safari lacks one). */
+export function makeCanvas(w, h) {
+  if (typeof OffscreenCanvas !== 'undefined') {
+    try {
+      const oc = new OffscreenCanvas(w, h);
+      if (oc.getContext('2d')) return oc;
+    } catch {
+      /* fall through */
+    }
+  }
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;

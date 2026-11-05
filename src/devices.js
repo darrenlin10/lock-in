@@ -44,6 +44,12 @@ export const DEVICES = [
 
 export const CUSTOM_DEVICE_ID = 'custom';
 
+// Largest canvas every target browser can allocate and export reliably.
+// iOS Safari refuses canvases above 16,777,216 pixels (4096×4096), and each
+// render needs a second same-size canvas for the desk texture.
+export const MAX_CANVAS_AREA = 16_777_216;
+export const MAX_CANVAS_SIDE = 8192;
+
 export function clampRect(r) {
   const c = (v, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : lo));
   const w = c(r.w, 0.15, 1);
@@ -57,13 +63,24 @@ export function clampRect(r) {
  */
 export function resolveDevice(design) {
   if (design.deviceId === CUSTOM_DEVICE_ID) {
-    const w = Math.round(Math.min(8000, Math.max(320, Number(design.customW) || 1179)));
-    const h = Math.round(Math.min(8000, Math.max(320, Number(design.customH) || 2556)));
+    let w = Math.min(MAX_CANVAS_SIDE, Math.max(320, Number(design.customW) || 1179));
+    let h = Math.min(MAX_CANVAS_SIDE, Math.max(320, Number(design.customH) || 2556));
+    let capped = w !== (Number(design.customW) || 1179) || h !== (Number(design.customH) || 2556);
+    if (w * h > MAX_CANVAS_AREA) {
+      // Scale down, keeping the aspect ratio, so the export still works on phones.
+      const k = Math.sqrt(MAX_CANVAS_AREA / (w * h));
+      w *= k;
+      h *= k;
+      capped = true;
+    }
+    w = Math.floor(w);
+    h = Math.floor(h);
     const portrait = h >= w;
     return {
       id: CUSTOM_DEVICE_ID,
       group: 'Custom',
       name: `Custom ${w}×${h}`,
+      capped,
       w,
       h,
       rect: portrait ? PHONE_RECT : COMPUTER_RECT,

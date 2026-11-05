@@ -8,7 +8,8 @@
 // the app still works for the session and warns that data won't persist.
 
 import { localTimeZone, normalizeDeadline, isValidTimeString } from './dates.js';
-import { normalizeTask } from './tasks.js';
+import { normalizeTask, clip } from './tasks.js';
+import { DEVICES, CUSTOM_DEVICE_ID } from './devices.js';
 
 export const STORAGE_KEY = 'lock-in:v1';
 export const SCHEMA_VERSION = 2;
@@ -56,42 +57,126 @@ export function defaultState(now = new Date()) {
   };
 }
 
-/** Merge unknown/partial input onto defaults so older or hand-edited data loads safely. */
+// Keys the renderer understands (kept in sync with render/*.js by a unit test).
+export const DESIGN_KEYS = {
+  paper: ['white', 'cream', 'legal', 'dots'],
+  font: ['serif', 'sans', 'mono'],
+  desk: ['walnut', 'black', 'marble'],
+  lighting: ['day', 'evening'],
+};
+
+const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+const str = (v, fallback, max = 200) => (typeof v === 'string' ? clip(v, max) : fallback);
+const oneOf = (v, list, fallback) => (list.includes(v) ? v : fallback);
+
+function validSnapshot(sn) {
+  return (
+    isObj(sn) &&
+    typeof sn.id === 'string' &&
+    typeof sn.version === 'string' &&
+    typeof sn.asOfDate === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(sn.asOfDate) &&
+    isObj(sn.device) &&
+    typeof sn.device.name === 'string' &&
+    ['exported', 'applied'].includes(sn.state) &&
+    typeof sn.exportedAt === 'string' &&
+    !Number.isNaN(Date.parse(sn.exportedAt)) &&
+    (sn.state !== 'applied' || (typeof sn.appliedAt === 'string' && !Number.isNaN(Date.parse(sn.appliedAt))))
+  );
+}
+
+/**
+ * Merge unknown/partial input onto defaults so older, corrupted or
+ * hand-edited data always loads into a state every screen can render.
+ */
 export function migrate(raw, now = new Date()) {
   const base = defaultState(now);
-  if (!raw || typeof raw !== 'object') return base;
-  const s = { ...base, ...raw };
-  s.schema = SCHEMA_VERSION;
-  s.deadline = normalizeDeadline({ ...base.deadline, ...(raw.deadline || {}) });
-  s.tasks = Array.isArray(raw.tasks) ? raw.tasks.map(normalizeTask) : [];
-  s.display = { ...base.display, ...(raw.display || {}) };
-  s.display.maxVisible = Math.min(6, Math.max(1, Math.round(Number(s.display.maxVisible) || 3)));
+  if (!isObj(raw)) return base;
+  const s = { ...base };
+  s.createdAt = str(raw.createdAt, base.createdAt);
+  s.deadline = normalizeDeadline({ ...base.deadline, ...(isObj(raw.deadline) ? raw.deadline : {}) });
+  s.goal = str(raw.goal, '', 600);
+  s.capacity = str(raw.capacity, '', 600);
+
+  // Tasks: unique IDs and a unique manual order (up/down swaps orders).
+  const seen = new Set();
+  const tasks = (Array.isArray(raw.tasks) ? raw.tasks : [])
+    .filter(isObj)
+    .map((t, i) => ({ t: normalizeTask(t), i }))
+    .sort((a, b) => a.t.order - b.t.order || a.i - b.i)
+    .map(({ t }, i) => {
+      let id = t.id;
+      while (seen.has(id)) id = `${t.id.slice(0, 50)}_${i}${seen.size}`;
+      seen.add(id);
+      return { ...t, id, order: i + 1 };
+    });
+  s.tasks = tasks;
+
+  const d = isObj(raw.display) ? raw.display : {};
+  s.display = {
+    maxVisible: Math.min(6, Math.max(1, Math.round(Number(d.maxVisible) || 3))),
+    showDue: typeof d.showDue === 'boolean' ? d.showDue : base.display.showDue,
+    eyebrow: str(d.eyebrow, base.display.eyebrow, 24),
+    sectionLabel: str(d.sectionLabel, base.display.sectionLabel, 24),
+  };
+
+  const ds = isObj(raw.design) ? raw.design : {};
+  const acc = isObj(ds.accessories) ? ds.accessories : {};
+  const bg = isObj(ds.background) ? ds.background : {};
   s.design = {
-    ...base.design,
-    ...(raw.design || {}),
-    accessories: { ...base.design.accessories, ...(raw.design?.accessories || {}) },
-    background: { ...base.design.background, ...(raw.design?.background || {}) },
+    deviceId: oneOf(ds.deviceId, [...DEVICES.map((x) => x.id), CUSTOM_DEVICE_ID], base.design.deviceId),
+    customW: Number.isFinite(Number(ds.customW)) ? Number(ds.customW) : base.design.customW,
+    customH: Number.isFinite(Number(ds.customH)) ? Number(ds.customH) : base.design.customH,
+    desk: oneOf(ds.desk, DESIGN_KEYS.desk, base.design.desk),
+    paper: oneOf(ds.paper, DESIGN_KEYS.paper, base.design.paper),
+    lighting: oneOf(ds.lighting, DESIGN_KEYS.lighting, base.design.lighting),
+    font: oneOf(ds.font, DESIGN_KEYS.font, base.design.font),
+    accessories: Object.fromEntries(Object.keys(base.design.accessories).map((k) => [k, typeof acc[k] === 'boolean' ? acc[k] : base.design.accessories[k]])),
+    background: {
+      type: bg.type === 'custom' ? 'custom' : 'bundled',
+      assetId: typeof bg.assetId === 'string' ? bg.assetId : null,
+      label: typeof bg.label === 'string' ? bg.label.slice(0, 120) : null,
+      model: typeof bg.model === 'string' ? bg.model.slice(0, 120) : null,
+      provider: typeof bg.provider === 'string' ? bg.provider : null,
+    },
   };
-  s.rects = raw.rects && typeof raw.rects === 'object' ? raw.rects : {};
-  s.snapshots = Array.isArray(raw.snapshots) ? raw.snapshots.slice(-MAX_SNAPSHOTS) : [];
-  s.reminders = { ...base.reminders, ...(raw.reminders || {}) };
-  if (!isValidTimeString(s.reminders.time)) s.reminders.time = '09:00';
-  if (!['none', 'daily', 'weekly'].includes(s.reminders.refresh)) s.reminders.refresh = 'weekly';
-  s.reminders.verified = s.reminders.verified && typeof s.reminders.verified === 'object' ? s.reminders.verified : {};
-  s.challenge = { ...base.challenge, ...(raw.challenge || {}) };
-  const rawAi = raw.ai && typeof raw.ai === 'object' ? raw.ai : {};
+  s.rects = {};
+  if (isObj(raw.rects)) {
+    for (const [k, r] of Object.entries(raw.rects)) {
+      if (isObj(r) && ['x', 'y', 'w', 'h'].every((n) => Number.isFinite(r[n]))) s.rects[k] = { x: r.x, y: r.y, w: r.w, h: r.h };
+    }
+  }
+  s.snapshots = (Array.isArray(raw.snapshots) ? raw.snapshots : []).filter(validSnapshot).slice(-MAX_SNAPSHOTS);
+
+  const rm = isObj(raw.reminders) ? raw.reminders : {};
+  s.reminders = {
+    time: isValidTimeString(rm.time) ? rm.time : '09:00',
+    refresh: oneOf(rm.refresh, ['none', 'daily', 'weekly'], 'weekly'),
+    verified: {},
+  };
+  if (isObj(rm.verified)) {
+    for (const [uid, v] of Object.entries(rm.verified)) if (isObj(v) && typeof v.sig === 'string') s.reminders.verified[uid] = { sig: v.sig, at: str(v.at, '') };
+  }
+
+  const ch = isObj(raw.challenge) ? raw.challenge : {};
+  s.challenge = { steps: {}, notes: str(ch.notes, '', 4000) };
+  if (isObj(ch.steps)) {
+    for (const [n, v] of Object.entries(ch.steps)) if (isObj(v)) s.challenge.steps[n] = { done: Boolean(v.done) };
+  }
+
+  const rawAi = isObj(raw.ai) ? raw.ai : {};
   s.ai = {
-    provider: ['gemini', 'openai', 'compatible'].includes(rawAi.provider) ? rawAi.provider : 'gemini',
-    models: rawAi.models && typeof rawAi.models === 'object' ? { ...rawAi.models } : {},
-    baseUrl: typeof rawAi.baseUrl === 'string' ? rawAi.baseUrl : '',
-    size: typeof rawAi.size === 'string' ? rawAi.size : '',
+    provider: oneOf(rawAi.provider, ['gemini', 'openai', 'compatible'], 'gemini'),
+    models: {},
+    baseUrl: str(rawAi.baseUrl, '', 300),
+    size: str(rawAi.size, '', 20),
   };
+  if (isObj(rawAi.models)) {
+    for (const [k, v] of Object.entries(rawAi.models)) if (typeof v === 'string' && ['gemini', 'openai', 'compatible'].includes(k)) s.ai.models[k] = v.slice(0, 120);
+  }
   // Schema 1 stored a single Gemini model ID.
-  if (raw.gemini?.model && !s.ai.models.gemini) s.ai.models.gemini = String(raw.gemini.model);
-  for (const k of Object.keys(s.ai.models)) if (typeof s.ai.models[k] !== 'string') delete s.ai.models[k];
-  // Never carry a key forward, even if an old or hand-edited backup contained one.
-  delete s.gemini;
-  delete s.ai.apiKey;
+  if (isObj(raw.gemini) && typeof raw.gemini.model === 'string' && !s.ai.models.gemini) s.ai.models.gemini = raw.gemini.model.slice(0, 120);
+  // Only known fields are copied above, so an API key can never be carried forward.
   return s;
 }
 
