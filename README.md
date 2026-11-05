@@ -190,8 +190,7 @@ CI (`.github/workflows/ci.yml`) runs the first four on every push and pull reque
 Keys are read from the environment, typed into the app's password field, and never printed or saved.
 
 **Results so far:**
-- Tier 1 passes against the real Gemini API (both Gemini and Imagen request paths).
-- OpenAI wasn't reachable from the environment these tests ran in, so OpenAI was only tested against mocks.
+- Tier 1 passes against the real Gemini API (both Gemini and Imagen request paths) and the real OpenAI API, in CI on GitHub Actions.
 - Tiers 2 and 3 haven't been run (no keys).
 - No physical iPhone has run `selftest.html` yet.
 
