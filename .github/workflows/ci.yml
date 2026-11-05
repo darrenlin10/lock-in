@@ -3,7 +3,7 @@ on:
   push:
   pull_request:
 jobs:
-  test:
+  unit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -11,3 +11,20 @@ jobs:
         with:
           node-version: 22
       - run: npm test
+
+  browser:
+    # End-to-end smoke test and emulated iPhone Safari compatibility test.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright (test-only, not an app dependency)
+        run: |
+          npm install --no-save --no-package-lock playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - run: npm run test:compat
+      - name: Live API check without a key (free; skips if unreachable)
+        run: npm run test:live

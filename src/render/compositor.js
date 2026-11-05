@@ -9,7 +9,7 @@
 // where an image model happened to put a sheet of paper.
 
 import { computeSheetLayout } from '../layout.js';
-import { deskTexture, drawAccessories, drawLighting, makeCanvas, mulberry32 } from './backgrounds.js';
+import { deskTexture, drawAccessories, drawLighting, freeCanvas, makeCanvas, mulberry32 } from './backgrounds.js';
 
 export const PAPERS = {
   white: { name: 'Crisp White Cardstock', fill: '#fbfbf8', ink: '#1b2230', muted: '#555d6b', accent: '#1f3a8a' },
@@ -182,7 +182,11 @@ function backgroundLayer(w, h, paperRect, design, image) {
     ? `img|${w}|${h}`
     : `desk|${design.desk}|${design.lighting}|${JSON.stringify(design.accessories || {})}|${w}|${h}|${paperRect.x},${paperRect.y},${paperRect.w},${paperRect.h}`;
   if (bgCache.key === key && bgCache.image === image && bgCache.canvas) return bgCache.canvas;
-  const c = bgCache.canvas && bgCache.canvas.width === w && bgCache.canvas.height === h ? bgCache.canvas : makeCanvas(w, h);
+  let c = bgCache.canvas;
+  if (!c || c.width !== w || c.height !== h) {
+    freeCanvas(c); // release the old size's memory right away (iOS Safari budget)
+    c = makeCanvas(w, h);
+  }
   const bctx = c.getContext('2d');
   bctx.setTransform(1, 0, 0, 1, 0, 0);
   bctx.clearRect(0, 0, w, h);
@@ -210,8 +214,14 @@ function backgroundLayer(w, h, paperRect, design, image) {
  */
 export function renderWallpaper(canvas, { size, rect, design, backgroundImage, content }) {
   const { w, h } = size;
-  if (canvas.width !== w) canvas.width = w;
-  if (canvas.height !== h) canvas.height = h;
+  if (canvas.width !== w || canvas.height !== h) {
+    // Collapse first: setting width then height separately would briefly
+    // allocate new-width × old-height, which can exceed iOS Safari's
+    // 16.7-megapixel canvas limit and break the canvas.
+    canvas.width = 0;
+    canvas.height = h;
+    canvas.width = w;
+  }
   const ctx = canvas.getContext('2d');
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, w, h);

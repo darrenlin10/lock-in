@@ -14,7 +14,7 @@ import {
   zonedWallTimeToInstant,
 } from './dates.js';
 import { createTask, displayLabel, progress, selectVisibleTasks, updateTask } from './tasks.js';
-import { DEVICES, CUSTOM_DEVICE_ID, resolveDevice, rectFor, rectKey, clampRect, describeRect } from './devices.js';
+import { DEVICES, CUSTOM_DEVICE_ID, resolveDevice, rectFor, rectKey, clampRect, describeRect, detectDevice } from './devices.js';
 import { planningPrompt, sceneryPrompt } from './prompts.js';
 import { parsePlanText } from './plan-import.js';
 import { buildIcs, buildReminderItems, googleCalendarUrl, isVerified } from './reminders.js';
@@ -1323,7 +1323,15 @@ function init() {
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && tick());
   setInterval(tick, 30_000);
 
-  if (!storage.load() && !state.tasks.length && new URLSearchParams(location.search).has('sample')) loadSample();
+  if (!storage.load()) {
+    // First launch: start with the screen this page is opened on.
+    try {
+      Object.assign(state.design, detectDevice({ width: screen.width, height: screen.height, dpr: window.devicePixelRatio || 1 }));
+    } catch {
+      /* keep the default preset */
+    }
+    if (!state.tasks.length && new URLSearchParams(location.search).has('sample')) loadSample();
+  }
   try {
     syncAll();
   } catch (err) {

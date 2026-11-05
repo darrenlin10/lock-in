@@ -186,3 +186,22 @@ test('custom sizes are capped to what browsers can export, keeping the shape', (
   assert.ok(tall.h <= 8192 && tall.w * tall.h <= MAX_CANVAS_AREA);
   assert.equal(resolveDevice({ deviceId: 'custom', customW: 1179, customH: 2556 }).capped, false);
 });
+
+test('first launch picks the preset matching the screen, or its exact size', async () => {
+  const { detectDevice } = await import('../src/devices.js');
+  assert.deepEqual(detectDevice({ width: 390, height: 844, dpr: 3 }), { deviceId: 'iphone-13' });
+  assert.deepEqual(detectDevice({ width: 393, height: 852, dpr: 3 }), { deviceId: 'iphone-6.1' });
+  assert.deepEqual(detectDevice({ width: 844, height: 390, dpr: 3 }), { deviceId: 'iphone-13' }); // opened in landscape
+  assert.deepEqual(detectDevice({ width: 1920, height: 1080, dpr: 1 }), { deviceId: 'desktop-1080p' });
+  assert.deepEqual(detectDevice({ width: 1470, height: 956, dpr: 2 }), { deviceId: 'custom', customW: 2940, customH: 1912 });
+  assert.deepEqual(detectDevice({ width: 0, height: 0, dpr: 1 }), { deviceId: 'iphone-6.1' });
+});
+
+test("every preset's default paper clears that preset's clock and shortcut guides", async () => {
+  const { DEVICES, resolveDevice } = await import('../src/devices.js');
+  const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  const devs = [...DEVICES, resolveDevice({ deviceId: 'custom', customW: 2880, customH: 2000 }), resolveDevice({ deviceId: 'custom', customW: 1640, customH: 2360 })];
+  for (const d of devs) {
+    for (const g of d.guides) assert.ok(!overlaps(d.rect, g), `${d.name}: default paper overlaps "${g.label}"`);
+  }
+});

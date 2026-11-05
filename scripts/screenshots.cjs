@@ -64,6 +64,10 @@ async function canvasPng(page, file) {
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   await page.goto(`${base}?sample#plan`);
   await page.waitForFunction(() => window.__lockIn && window.__lockIn.lastRender);
+  // First launch auto-detects the screen (this desktop window); the docs
+  // images show the iPhone preset, so pick it explicitly.
+  await page.evaluate(() => { const sel = document.querySelector('#dev-select'); sel.value = 'iphone-6.1'; sel.dispatchEvent(new Event('change')); });
+  await page.waitForFunction(() => window.__lockIn.lastRender.device.id === 'iphone-6.1');
 
   const st = await page.evaluate(() => ({ dl: window.__lockIn.state.deadline, n: window.__lockIn.state.tasks.length, shown: window.__lockIn.lastRender.layout.shownItems, big: window.__lockIn.lastRender.content.big }));
   check(st.n === 6, 'sample has 6 tasks');
@@ -115,6 +119,12 @@ async function canvasPng(page, file) {
   await canvasPng(page, 'wallpaper-macbook-walnut.jpg');
   const wl = await page.evaluate(() => window.__lockIn.lastRender.layout.warnings);
   check(wl.length === 0, `no layout warnings on macbook (${JSON.stringify(wl)})`);
+  for (const dev of ['desktop-1080p', 'desktop-1440p', 'desktop-4k', 'macbook-pro-14', 'macbook-air-13']) {
+    await page.selectOption('#dev-select', dev);
+    await page.waitForFunction((d) => window.__lockIn.lastRender.device.id === d, dev);
+    const shown = await page.$$eval('#warnings li', (l) => l.map((x) => x.textContent));
+    check(shown.length === 0, `no preview warnings by default on ${dev} (${shown.join(' / ')})`);
+  }
 
   // Back to iPhone for export + install flow.
   await page.selectOption('#dev-select', 'iphone-6.1');

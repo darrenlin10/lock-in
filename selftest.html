@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Lock-In Device Check</title>
+  <meta name="description" content="Checks that this phone or computer's browser can create, export and share Lock-In wallpapers." />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .wrap { max-width: 760px; margin: 0 auto; padding: 16px; }
+    .results { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
+    .results li { display: grid; grid-template-columns: 4.2rem 1fr; gap: .6rem; align-items: start; border: 1px solid var(--border); border-radius: 8px; padding: .5rem .7rem; background: var(--surface); }
+    .results .tag { font-weight: 700; font-size: .8rem; text-align: center; border-radius: 999px; padding: .1rem .4rem; border: 1px solid var(--border); }
+    .results .pass .tag { background: var(--ok-bg); border-color: var(--ok-border); }
+    .results .fail .tag { background: var(--bad-bg); border-color: var(--bad-border); }
+    .results .info .tag, .results .wait .tag { background: var(--surface-2); }
+    .results small { display: block; color: var(--muted); overflow-wrap: anywhere; }
+    #thumb { max-width: 160px; border-radius: 12px; display: block; margin: .5rem 0; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <h1 style="font-family: Georgia, serif">Lock-In device check</h1>
+    <p class="hint">Open this page on the phone or computer you'll use Lock-In on. It tests the browser features Lock-In needs. Nothing is sent anywhere: results stay on this page until you copy them.</p>
+    <div class="buttons">
+      <button class="btn primary" id="run">Run automatic checks</button>
+      <button class="btn" id="share" disabled>Test Share / Save to Photos</button>
+      <button class="btn" id="download" disabled>Test download</button>
+      <button class="btn" id="copy">Copy results</button>
+    </div>
+    <p class="hint" id="note">The Share test needs a tap, so it can't run automatically. After it opens the share sheet you can cancel. Opening the sheet is the test.</p>
+    <img id="thumb" alt="Test wallpaper generated on this device" hidden />
+    <ul class="results" id="results"></ul>
+    <p class="hint"><a href="./">Back to Lock-In</a></p>
+  </main>
+  <script type="module" src="src/selftest.js"></script>
+</body>
+</html>
