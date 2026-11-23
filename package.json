@@ -14,6 +14,7 @@
     "test:browser": "node scripts/screenshots.cjs",
     "test:compat": "node scripts/compat-test.cjs",
     "test:live": "node scripts/live-api-test.cjs",
-    "screenshots": "node scripts/screenshots.cjs"
+    "screenshots": "node scripts/screenshots.cjs",
+    "test:a11y": "node scripts/a11y-test.cjs"
   }
 }

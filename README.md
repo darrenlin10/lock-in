@@ -1,8 +1,10 @@
-# Lock-In: Countdown Lock Screen Studio
+# Lock-In: Countdown Lock Screen
 
-**Plan backward from one deadline with Gemini and turn the plan into a readable desk-and-paper lock screen. Then schedule the reminders that keep you on track.**
+**Turn your most important deadline into a lock screen you'll actually read: how many days are left, the exact due date and your next three steps, on a desk-and-paper wallpaper. Plan the steps with Gemini, then add reminders to your calendar.**
 
-Built for the Handshake × Google mission [*Your Deadline, Your Design: Create a Countdown Lock Screen*](https://joinhandshake.com/learn/your-deadline-your-design-create-a-countdown-lock-screen-e748e649/).
+Free, no account, no tracking. Works on iPhone, Android, Mac and Windows, and keeps working offline once opened.
+
+Originally built for the Handshake × Google mission [*Your Deadline, Your Design: Create a Countdown Lock Screen*](https://joinhandshake.com/learn/your-deadline-your-design-create-a-countdown-lock-screen-e748e649/).
 
 <p align="center">
   <img src="docs/images/wallpaper-iphone-walnut.jpg" width="200" alt="iPhone lock screen: walnut desk, cream paper, 30 days left, three next actions" />
@@ -27,16 +29,16 @@ npm start
 
 Then open <http://localhost:8080/?sample>. With no Node.js, `python3 -m http.server 8080` in the repo folder works too. The app must be served over HTTP; opening `index.html` directly from disk won't load its modules.
 
-`?sample` loads a fictional deadline ("Capstone final report", 30 days out) with six planned actions. Then walk the six tabs:
+`?sample` loads a fictional deadline ("Capstone final report", 30 days out) with six planned actions. (Without it, a new visitor sees a welcome card with *Get started* and *See an example first*.) Then walk the five tabs:
 
 | Tab | What to try | What it shows |
 |---|---|---|
 | **1 Deadline** | Switch between *Date only* and *Specific time*, change the timezone | Correct calendar-day countdown semantics |
 | **2 Plan** | Copy the Gemini prompt; paste a plan into *Paste the plan you accepted*; tick an action done | Backward planning; completed actions leave the wallpaper |
 | **3 Design** | Change device, desk, paper and lighting; drag the paper sliders into the clock area | Device-formatted design and readability warnings |
-| **4 Install** | Download PNG, then confirm installation; go back and edit a task | Exported ≠ installed; the status turns "out of date" |
+| **4 Export** | Save the image, then confirm it's on your lock screen; go back and edit a task | Saved ≠ on your lock screen; the status turns "out of date" |
 | **5 Reminders** | Download the `.ics` or click *Add to Google Calendar*; tick *Seen in my calendar* | Reminder scheduling that is actually verified |
-| **6 Review** | Step through the challenge checklist | Evidence collected automatically from your data |
+| **Settings** (top right) | Download/restore a backup, load the example, erase everything; read *How it works* and *Privacy* | Your data stays yours, and you can take it with you |
 
 To see the readability rules at work, open **Plan**, clear an action's *short label*, and give it a very long title. The preview flags it and offers a **Fix** link. The text never shrinks below the minimum readable size.
 
@@ -100,6 +102,17 @@ Why Gemini doesn't draw the text: image models can't guarantee correct dates, co
 - A new image is previewed as a candidate. Lock-In checks whether the clock and shortcut areas look busy, and you choose to use it or discard it.
 - Any charges are billed to the account that owns the key.
 
+**Made for everyday use** (not just a demo):
+- **First run:** a welcome card explains the three steps and offers an example to explore. Lock-In also picks the device preset matching the screen it's opened on.
+- **Settings:** backup and restore, load the example, erase everything, *How it works*, and a plain-language *Privacy* page.
+- **Forgiving:** deleting an action shows *Undo*, exporting without a due date is refused with a pointer to the date field, and corrupted saved data never leaves you with a blank page.
+- **Phones:** on iPhone and Android, *Save to Photos / Share* is the main button. A floating *See preview* button jumps to the preview. Form fields are 16 px so iPhone Safari doesn't zoom in, and the layout respects the notch and home bar.
+- **Regional dates:** English-language regions get their own date style (UK: "Fri 4 Dec 2026", 24-hour time).
+- **Big photos:** camera photos (e.g. 48 MP) are shrunk to at most 4096 px on import, so they don't exhaust the phone's memory.
+- **Bad connections:** once opened, the app loads from its offline copy within about 4 seconds even on a stalled connection, and updates itself when the network answers.
+- **Security:** a Content-Security-Policy lets only the app's own scripts run (no inline or third-party scripts) and blocks tracking images.
+- **Accessible:** keyboard-navigable tabs (arrow keys), a focus-trapped Settings dialog, and no axe-core violations at WCAG 2.2 AA in light or dark mode.
+
 ---
 
 ## Design document traceability
@@ -115,7 +128,7 @@ The full design doc is in [`docs/DESIGN_DOC.md`](docs/DESIGN_DOC.md). Its §8 ta
 | 4: Desk-and-paper design | ✅ Deterministic compositor, 3 desks, 4 papers, 3 typefaces, 2 lighting moods, 3 accessories |
 | 5: Install and inspect | ✅ Export/share, per-platform instructions, guide overlays, user-confirmed install checklist |
 | 6: Schedule and verify reminders | ✅ `.ics` with alerts, Google Calendar links, per-item verification with invalidation |
-| 1, 7, 8: Verify brief / evidence / submit | 🟡 Checklist and notes in the Review tab; these are human steps on Handshake |
+| 1, 7, 8: Verify brief / evidence / submit | 🟡 Human steps on Handshake. An early in-app checklist was removed when Lock-In became a consumer product |
 | 11: Local tasks + deadline model | ✅ Persistence, completion, priority, pinning, short labels, restart-safe |
 | 12: Deterministic composition + bundled presets | ✅ Offline, no key needed; calibration, wrapping, overflow |
 | 13: Limited aesthetic customizer | ✅ |
@@ -134,13 +147,14 @@ The doc's §3.2, §3.3, §4.2, §4.3 and §5.1 rules (content limits, countdown 
 
 | Command | What it runs | Needs |
 |---|---|---|
-| `npm test` | 57 unit tests (Node, no dependencies) | Node 20+ |
+| `npm test` | 59 unit tests (Node, no dependencies) | Node 20+ |
 | `npm run test:browser` | End-to-end run of the whole app in headless Chromium; also regenerates `docs/images/` | Playwright |
 | `npm run test:compat` | The app under emulated **iPhone Safari** constraints | Playwright |
+| `npm run test:a11y` | Accessibility audit (axe-core, WCAG 2.2 AA) of every screen, phone and desktop, light and dark | Playwright, axe-core |
 | `npm run test:live` | The BYOK flow against the **real** provider APIs, in a real browser | network access; optional API keys |
 | `selftest.html` | Device check you open **on your own phone** | a phone |
 
-CI (`.github/workflows/ci.yml`) runs the first four on every push and pull request (`test:live` without a key).
+CI (`.github/workflows/ci.yml`) runs all five scripts on every push and pull request (`test:live` without a key).
 
 **Unit tests** (`npm test`) cover:
 - countdown/DST semantics, task selection, plan parsing, prompt templates;
@@ -173,7 +187,7 @@ CI (`.github/workflows/ci.yml`) runs the first four on every push and pull reque
 - **Web Share.** Safari rejects `navigator.share()` unless it is called during the tap itself. The test uses a Safari-strict share stub to check that the app always calls it inside the tap, and asks for a second tap after a fresh edit instead of sharing late.
 - **Older Safari.** It removes `OffscreenCanvas`, `Intl.Segmenter`, `Intl.supportedValuesOf`, Web Share and IndexedDB, then checks that rendering, warnings, export and the timezone list still work.
 
-**Real devices** (`selftest.html`, also linked as *Device check* in the app's footer). Open it on the phone you'll use, from the **HTTPS** site (e.g. GitHub Pages); over plain HTTP the browser switches off Share and offline mode. It reports:
+**Real devices** (`selftest.html`, also linked as *Check my device* in the app's footer and in Settings). Open it on the phone you'll use, from the **HTTPS** site (e.g. GitHub Pages); over plain HTTP the browser switches off Share and offline mode. It reports:
 - which preset matches the screen;
 - which browser features are present;
 - whether the real wallpaper renders and exports at full size;
@@ -196,14 +210,14 @@ Keys are read from the environment, typed into the app's password field, and nev
 
 **Still not verified:**
 - **Installation on physical devices.** Clock style, widgets and wallpaper zoom vary; confirm on your own phone or computer.
-- **The mission's submission requirements.** The deadline, required uploads and judging criteria come from the signed-in Handshake mission page. The November 23, 2026 date in the original design notes is **unverified**. The Review tab reminds you to check the mission page.
+- **The mission's submission requirements.** The deadline, required uploads and judging criteria come from the signed-in Handshake mission page. The November 23, 2026 date in the original design notes is **unverified**. Check the mission page before submitting.
 
 ---
 
 ## Project structure
 
 ```
-index.html, styles.css        UI shell (six-step flow + live preview)
+index.html, styles.css        UI shell (five steps, Settings, live preview)
 src/app.js                    Controller: state ↔ UI ↔ renderer
 src/dates.js                  Timezone-aware countdown semantics
 src/tasks.js                  Task model and visible-action selection
@@ -234,7 +248,7 @@ There are no runtime or build dependencies. The app is plain ES modules, so the 
 
 ## Privacy
 
-Lock-In has no backend. Your deadline, plan, reminders and images stay in your browser until you export them. *Erase all data* in the Review tab removes everything. Backups (`.json`) never contain an API key. Background images are not included in backups.
+Lock-In has no backend. Your deadline, plan, reminders and images stay in your browser until you export them. *Erase everything* in Settings removes it all. Backups (`.json`) never contain an API key. Background images are not included in backups.
 
 ## License
 

@@ -81,3 +81,18 @@ test('validation helpers', () => {
 function pick(c) {
   return { status: c.status, days: c.days, asOfDate: c.asOfDate };
 }
+
+test('dates follow the English variant of the user locale; other languages fall back to en-US', async () => {
+  const { setDisplayLocale, formatDateLong, formatDateShort, formatTimeWithZone } = await import('../src/dates.js');
+  try {
+    assert.equal(setDisplayLocale('en-GB'), 'en-GB');
+    assert.match(formatDateLong('2026-12-04'), /^Fri,? 4 Dec 2026$/); // comma varies by ICU version
+    assert.equal(formatDateShort('2026-12-04'), '4 Dec');
+    assert.match(formatTimeWithZone('2026-12-04T23:59:00Z', 'UTC'), /^23:59/);
+    assert.equal(setDisplayLocale('fr-FR'), 'en-US');
+    assert.equal(formatDateLong('2026-12-04'), 'Fri, Dec 4, 2026');
+    assert.equal(setDisplayLocale(undefined), 'en-US');
+  } finally {
+    setDisplayLocale('en-US');
+  }
+});

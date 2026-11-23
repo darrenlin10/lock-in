@@ -152,9 +152,8 @@ test('corrupted or hostile backups always load into a renderable state', () => {
     assert.equal(typeof s.display.eyebrow, 'string');
     assert.equal(typeof s.display.sectionLabel, 'string');
     assert.equal(typeof s.display.showDue, 'boolean');
-    assert.equal(typeof s.challenge.steps, 'object');
-    assert.notEqual(s.challenge.steps, null);
-    assert.equal(typeof s.challenge.notes, 'string');
+    assert.equal(s.challenge, undefined, 'old challenge checklist data is dropped');
+    assert.equal(typeof s.welcomed, 'boolean');
     assert.equal(typeof s.goal, 'string');
     for (const sn of s.snapshots) assert.ok(sn.device && typeof sn.asOfDate === 'string');
     const ids = s.tasks.map((t) => t.id);
@@ -204,4 +203,11 @@ test("every preset's default paper clears that preset's clock and shortcut guide
   for (const d of devs) {
     for (const g of d.guides) assert.ok(!overlaps(d.rect, g), `${d.name}: default paper overlaps "${g.label}"`);
   }
+});
+
+test('welcome card is for brand-new users only', () => {
+  assert.equal(migrate({}).welcomed, false);
+  assert.equal(migrate({ tasks: [{ title: 'a' }] }).welcomed, true); // existing user from an older version
+  assert.equal(migrate({ deadline: { date: '2026-12-01', timeZone: 'UTC' } }).welcomed, true);
+  assert.equal(migrate({ welcomed: true }).welcomed, true);
 });
