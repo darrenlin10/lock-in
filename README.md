@@ -4,6 +4,10 @@
 
 Free, no account, no tracking. Works on iPhone, Android, Mac and Windows, and keeps working offline once opened.
 
+### ▶ Use it now: **[darrenlin10.github.io/lock-in](https://darrenlin10.github.io/lock-in/)**
+
+Try it with an example: [darrenlin10.github.io/lock-in/?sample](https://darrenlin10.github.io/lock-in/?sample) · Check your phone: [Device check](https://darrenlin10.github.io/lock-in/selftest.html)
+
 Originally built for the Handshake × Google mission [*Your Deadline, Your Design: Create a Countdown Lock Screen*](https://joinhandshake.com/learn/your-deadline-your-design-create-a-countdown-lock-screen-e748e649/).
 
 <p align="center">
@@ -21,7 +25,9 @@ Originally built for the Handshake × Google mission [*Your Deadline, Your Desig
 
 ## For judges: the 3-minute tour
 
-**Run it.** No install, accounts or API keys needed:
+**Open it:** [darrenlin10.github.io/lock-in/?sample](https://darrenlin10.github.io/lock-in/?sample) loads the example. Nothing to install, no account, no API key.
+
+**Or run it locally:**
 
 ```bash
 npm start
