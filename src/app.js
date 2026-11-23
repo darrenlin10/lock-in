@@ -1,5 +1,5 @@
 // Lock-In app controller: wires the local store, deterministic compositor,
-// optional Gemini BYOK scenery, reminders and the challenge checklist.
+// optional bring-your-own-key scenery, reminders and settings.
 
 import {
   countdownText,
@@ -12,14 +12,15 @@ import {
   normalizeDeadline,
   addDays,
   zonedWallTimeToInstant,
+  setDisplayLocale,
+  getDisplayLocale,
 } from './dates.js';
 import { createTask, displayLabel, progress, selectVisibleTasks, updateTask } from './tasks.js';
-import { DEVICES, CUSTOM_DEVICE_ID, resolveDevice, rectFor, rectKey, clampRect, describeRect, detectDevice } from './devices.js';
+import { DEVICES, CUSTOM_DEVICE_ID, resolveDevice, rectFor, rectKey, clampRect, describeRect, detectDevice, MAX_CANVAS_AREA } from './devices.js';
 import { planningPrompt, sceneryPrompt } from './prompts.js';
 import { parsePlanText } from './plan-import.js';
 import { buildIcs, buildReminderItems, googleCalendarUrl, isVerified } from './reminders.js';
 import {
-  CHALLENGE_STEPS,
   createStorage,
   defaultState,
   hashString,
@@ -30,7 +31,7 @@ import {
   wallpaperStatus,
 } from './store.js';
 import { renderWallpaper, drawCover, PAPERS, FONTS } from './render/compositor.js';
-import { DESKS, LIGHTING, ACCESSORIES } from './render/backgrounds.js';
+import { DESKS, LIGHTING, ACCESSORIES, makeCanvas, freeCanvas } from './render/backgrounds.js';
 import * as ai from './ai.js';
 import { putAsset, getAsset, clearAssets } from './idb.js';
 
@@ -42,7 +43,7 @@ const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const fmtStamp = (iso) =>
-  new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  new Date(iso).toLocaleString(getDisplayLocale(), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
 
 function safeLocalStorage() {
@@ -54,12 +55,21 @@ function safeLocalStorage() {
 }
 
 let toastTimer = 0;
-function toast(msg) {
+let toastActionFn = null;
+/** Show a short message; optionally with one action button (e.g. Undo). */
+function toast(msg, action) {
   const el = $('#toast');
-  el.textContent = msg;
+  $('#toast-text').textContent = msg;
+  const btn = $('#toast-action');
+  toastActionFn = action ? action.run : null;
+  btn.hidden = !action;
+  if (action) btn.textContent = action.label;
   el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.hidden = true), 3200);
+  toastTimer = setTimeout(() => {
+    el.hidden = true;
+    toastActionFn = null;
+  }, action ? 7000 : 3200);
 }
 
 function download(blob, filename) {
@@ -73,6 +83,7 @@ function download(blob, filename) {
 
 // -------------------------------------------------------------------- state
 
+setDisplayLocale(navigator.language);
 const storage = createStorage(safeLocalStorage());
 let state = migrate(storage.load());
 let now = new Date();
@@ -244,16 +255,20 @@ function renderWarnings() {
 
 // --------------------------------------------------------------------- tabs
 
-const TAB_IDS = ['deadline', 'plan', 'design', 'install', 'reminders', 'challenge'];
+const TAB_IDS = ['deadline', 'plan', 'design', 'install', 'reminders'];
 function showTab(id, focusTask) {
   if (!TAB_IDS.includes(id)) id = 'deadline';
-  for (const t of $$('.tab')) t.setAttribute('aria-selected', String(t.dataset.tab === id));
+  for (const t of $$('.tab')) {
+    t.setAttribute('aria-selected', String(t.dataset.tab === id));
+    t.tabIndex = t.dataset.tab === id ? 0 : -1;
+    // Keep the selected tab visible when the tab bar scrolls (phones).
+    if (t.dataset.tab === id) t.parentElement.scrollTo?.({ left: Math.max(0, t.offsetLeft - 16), behavior: 'smooth' });
+  }
   for (const p of $$('.panel')) p.hidden = p.dataset.panel !== id;
   if (location.hash !== `#${id}`) history.replaceState(null, '', `#${id}`);
   if (id === 'plan') renderPlanPrompt();
   if (id === 'design') renderSceneryPrompt();
   if (id === 'reminders') renderReminders();
-  if (id === 'challenge') renderChallenge();
   if (id === 'install') renderInstall();
   if (focusTask) {
     const input = $(`.task[data-id="${CSS.escape(focusTask)}"] .t-label`);
@@ -270,10 +285,10 @@ function renderTabMarkers() {
   const marks = {
     deadline: Boolean(state.deadline.date && state.deadline.title),
     plan: state.tasks.some((t) => t.title),
-    design: lastRender ? currentWarnings().filter((w) => w.tab === 'design').length === 0 : false,
+    // "Done" only once there is something to design, not on an empty start.
+    design: Boolean(state.deadline.date) && lastRender ? currentWarnings().filter((w) => w.tab === 'design').length === 0 : false,
     install: status === 'current',
     reminders: rem.some((i) => !i.past) && rem.filter((i) => !i.past).every((i) => isVerified(i, state.reminders.verified)),
-    challenge: CHALLENGE_STEPS.every((s) => state.challenge.steps[s.n]?.done),
   };
   for (const t of $$('.tab')) t.classList.toggle('done', Boolean(marks[t.dataset.tab]));
 }
@@ -458,9 +473,20 @@ function initPlan() {
     if (btn.classList.contains('t-pin')) patchTask(id, { pinned: !task.pinned });
     else if (btn.classList.contains('t-up') || btn.classList.contains('t-down')) moveTask(id, btn.classList.contains('t-up') ? -1 : 1);
     else if (btn.classList.contains('t-del')) {
-      if (!confirm(`Delete “${task.title}”?`)) return;
       state.tasks = state.tasks.filter((t) => t.id !== id);
       persist();
+      const name = task.title.length > 40 ? `${task.title.slice(0, 40)}…` : task.title;
+      toast(`Deleted “${name}”.`, {
+        label: 'Undo',
+        run: () => {
+          // Put back only the deleted action (it keeps its place via `order`),
+          // so edits made since the delete aren't lost.
+          if (!state.tasks.some((t) => t.id === task.id)) state.tasks = [...state.tasks, task];
+          persist();
+          renderTasks();
+          schedulePreview();
+        },
+      });
     }
     renderTasks();
     schedulePreview();
@@ -662,12 +688,12 @@ function initDesign() {
     e.target.value = '';
     if (!file) return;
     if (!/^image\/(png|jpeg|webp)$/.test(file.type)) return toast('Use a PNG, JPEG or WebP image.');
-    if (file.size > 20 * 1024 * 1024) return toast('That image is over 20 MB.');
+    if (file.size > 50 * 1024 * 1024) return toast('That image is over 50 MB. Try a smaller copy.');
     try {
-      const image = await createImageBitmap(file);
-      setCandidate({ image, blob: file, source: 'upload', label: file.name, model: null });
+      const { image, blob } = await decodeBackground(file);
+      setCandidate({ image, blob, source: 'upload', label: file.name.slice(0, 80), model: null });
     } catch {
-      toast('Could not read that image.');
+      toast("Couldn't read that image. Try a PNG or JPEG.");
     }
   });
 
@@ -798,6 +824,32 @@ function renderModelPicker() {
     .join('');
 }
 
+/**
+ * Decode a background image, shrinking very large photos (e.g. 48 MP camera
+ * shots) to at most 4096 px on the long side and 16.7 MP. That is more than
+ * any supported screen needs, and keeps memory within what phones allow.
+ * Returns the decoded image and the blob to store.
+ */
+async function decodeBackground(blob) {
+  const full = await createImageBitmap(blob);
+  const k = Math.min(1, 4096 / Math.max(full.width, full.height), Math.sqrt(MAX_CANVAS_AREA / (full.width * full.height)));
+  if (k >= 1) return { image: full, blob };
+  const w = Math.max(1, Math.round(full.width * k));
+  const h = Math.max(1, Math.round(full.height * k));
+  const c = makeCanvas(w, h);
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(full, 0, 0, w, h);
+  full.close?.();
+  const small = c.convertToBlob
+    ? await c.convertToBlob({ type: 'image/jpeg', quality: 0.9 })
+    : await new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.9));
+  const image = await createImageBitmap(c);
+  freeCanvas(c);
+  if (!small) throw new Error('could not encode the resized image');
+  return { image, blob: small };
+}
+
 function aiStatus(msg, kind) {
   const el = $('#ai-status');
   el.textContent = msg;
@@ -815,10 +867,10 @@ async function generateWithAi() {
   try {
     if (cfg.size && !ai.isValidSize(cfg.size)) throw new ai.AiError('config', 'Image size must look like 1024x1536, or be blank.');
     const res = await ai.generateImage(cfg, { prompt: $('#scenery-prompt').value, width: dev.w, height: dev.h });
-    const image = await createImageBitmap(res.blob);
+    const { image, blob } = await decodeBackground(res.blob);
     if (image.width < 256 || image.height < 256) throw new ai.AiError('no-image', 'The returned image was too small to use.');
     const label = `${provider.name.replace(/ \(custom URL\)$/, '')} · ${cfg.model}`;
-    setCandidate({ image, blob: res.blob, source: cfg.provider, label, model: cfg.model, provider: cfg.provider });
+    setCandidate({ image, blob, source: cfg.provider, label, model: cfg.model, provider: cfg.provider });
     aiStatus('Done. Review the preview and choose whether to use it.', 'ok');
   } catch (err) {
     aiStatus(err.message || 'Generation failed. Your current background is unchanged.', 'bad');
@@ -943,11 +995,20 @@ async function loadBackground() {
 
 function initInstall() {
   $('#export-png').addEventListener('click', () => exportPng(false));
-  $('#export-png-2').addEventListener('click', () => exportPng(false));
+  // On touch devices with Web Share, the preview's main button shares (that's
+  // how a picture gets into Photos on iPhone, incl. home-screen apps).
+  $('#export-png-2').addEventListener('click', () => exportPng(preferShare));
   $('#share-png').addEventListener('click', () => exportPng(true));
   try {
     const probe = new File([new Blob(['x'])], 'x.png', { type: 'image/png' });
     shareSupported = Boolean(navigator.canShare && navigator.canShare({ files: [probe] }));
+    preferShare = shareSupported && window.matchMedia('(pointer: coarse)').matches;
+    if (preferShare) {
+      $('#export-png-2').textContent = 'Save to Photos / Share';
+      $('#share-png').classList.add('primary');
+      $('#export-png').classList.remove('primary');
+      $('#share-png').after($('#export-png'));
+    }
     $('#share-png').hidden = !shareSupported;
   } catch {
     $('#share-png').hidden = true;
@@ -965,11 +1026,12 @@ function initInstall() {
     renderInstall();
     renderWallpaperStatus();
     renderTabMarkers();
-    toast('Marked as installed. Lock-In will tell you when it goes out of date.');
+    toast("Done. Lock-In will tell you when it's out of date.");
   });
 }
 
 let shareSupported = false;
+let preferShare = false;
 let pngCache = { version: null, blob: null };
 let pngTimer = 0;
 
@@ -994,6 +1056,12 @@ async function exportPng(share) {
     return;
   }
   if (exporting) return;
+  if (!state.deadline.date) {
+    toast('Choose a due date first, so the countdown is right.');
+    showTab('deadline');
+    $('#dl-date').focus();
+    return;
+  }
   renderPreview();
   const { version, device: dev, asOfDate, content } = lastRender;
   const name = `lock-in-${slug(content.title) || 'deadline'}-${dev.w}x${dev.h}-as-of-${asOfDate}.png`;
@@ -1024,7 +1092,7 @@ async function exportPng(share) {
   persist();
   renderInstall();
   renderWallpaperStatus();
-  toast('Exported. Set it as your lock screen, then confirm in step 4.');
+  toast('Saved. Set it as your lock screen, then confirm in the Export tab.');
 }
 
 let exporting = false;
@@ -1038,10 +1106,10 @@ function renderWallpaperStatus() {
   const st = statusSummary();
   const pill = $('#wallpaper-pill');
   const map = {
-    none: ['No wallpaper exported yet', 'pill'],
-    exported: ['Exported, installation not confirmed', 'pill warn'],
-    current: ['Installed wallpaper is current', 'pill ok'],
-    stale: ['Installed wallpaper is out of date', 'pill bad'],
+    none: ['No wallpaper yet', 'pill'],
+    exported: ['Saved, not confirmed on your lock screen', 'pill warn'],
+    current: ['Lock screen is up to date', 'pill ok'],
+    stale: ['Lock screen is out of date', 'pill bad'],
   };
   const [text, cls] = map[st.kind];
   pill.textContent = text;
@@ -1055,17 +1123,17 @@ function renderInstall() {
   const s = st.snapshot;
   if (st.kind === 'none') {
     el.className = 'callout';
-    el.textContent = 'Nothing exported yet. Download the PNG, set it as your lock screen, then confirm below.';
+    el.textContent = 'Nothing saved yet. Save the image, set it as your lock screen, then confirm below.';
   } else if (st.kind === 'exported') {
     el.className = 'callout warn';
-    el.textContent = `Exported ${fmtStamp(s.exportedAt)} for ${s.device.name}. Installation not confirmed yet.`;
+    el.textContent = `Saved ${fmtStamp(s.exportedAt)} for ${s.device.name}. Once it's your lock screen, confirm below.`;
   } else if (st.kind === 'current') {
     el.className = 'callout ok';
-    el.textContent = `Installed (you confirmed ${fmtStamp(s.appliedAt)}). It matches your current plan and today's countdown.`;
+    el.textContent = `On your lock screen (you confirmed ${fmtStamp(s.appliedAt)}). It matches your plan and today's countdown.`;
   } else {
     const dateChanged = s.asOfDate !== lastRender.asOfDate;
     el.className = 'callout bad';
-    el.textContent = `Your installed wallpaper (confirmed ${fmtStamp(s.appliedAt)}) is out of date: ${
+    el.textContent = `Your lock screen (confirmed ${fmtStamp(s.appliedAt)}) is out of date: ${
       dateChanged ? `it shows the countdown as of ${formatDateLong(s.asOfDate)}` : 'your plan or design changed since'
     }. Export a fresh one.`;
   }
@@ -1076,7 +1144,7 @@ function renderInstall() {
         .map(
           (sn) =>
             `<li><span>${esc(fmtStamp(sn.exportedAt))} · ${esc(sn.device.name)} · as of ${esc(formatDateShort(sn.asOfDate))}</span><span>${
-              sn.state === 'applied' ? `Installed ✓ (confirmed ${esc(fmtStamp(sn.appliedAt))})` : 'Exported'
+              sn.state === 'applied' ? `On lock screen ✓ (confirmed ${esc(fmtStamp(sn.appliedAt))})` : 'Saved'
             }${lastRender && sn.version === lastRender.version ? ' · matches preview' : ''}</span></li>`,
         )
         .join('')
@@ -1150,43 +1218,53 @@ function renderReminders() {
   sum.textContent = upcoming.length ? `${done} of ${upcoming.length} upcoming reminders verified in your calendar.` : '';
 }
 
-// ---------------------------------------------------------------- challenge
+// ----------------------------------------------------------------- settings
 
-function autoEvidence(n) {
-  const st = statusSummary();
-  const rem = reminderItems().filter((i) => !i.past);
-  const verified = rem.filter((i) => isVerified(i, state.reminders.verified)).length;
-  const warnings = currentWarnings().length;
-  switch (n) {
-    case 2:
-      return state.deadline.date ? `Deadline: ${deadlineDescription()} · Device: ${device().name} (${device().w}×${device().h})` : 'No deadline date yet.';
-    case 3: {
-      const p = progress(state.tasks);
-      return `${plural(p.total, 'action')} in the plan; ${lastRender?.layout.shownItems ?? 0} shown on the lock screen.`;
-    }
-    case 4:
-      return warnings ? `Preview has ${plural(warnings, 'warning')}.` : 'Preview has no readability warnings.';
-    case 5:
-      return st.kind === 'current' ? `Installed and confirmed ${fmtStamp(st.snapshot.appliedAt)}.` : st.kind === 'stale' ? 'Installed wallpaper is out of date.' : 'Not confirmed as installed yet.';
-    case 6:
-      return rem.length ? `${verified} of ${rem.length} upcoming reminders verified.` : 'No upcoming reminders yet.';
-    default:
-      return '';
-  }
+let settingsReturnFocus = null;
+function openSettings(section) {
+  settingsReturnFocus = document.activeElement;
+  $('#settings').hidden = false;
+  $('#settings-backdrop').hidden = false;
+  document.body.classList.add('modal-open');
+  $('#preview-jump').hidden = true;
+  const target = section ? $(`#settings-${section}`) : null;
+  if (target) target.scrollIntoView({ block: 'start' });
+  else $('#settings .modal-body').scrollTop = 0;
+  $('#close-settings').focus();
+}
+function closeSettings() {
+  if ($('#settings').hidden) return;
+  $('#settings').hidden = true;
+  $('#settings-backdrop').hidden = true;
+  document.body.classList.remove('modal-open');
+  updatePreviewJump();
+  settingsReturnFocus?.focus?.();
 }
 
-function initChallenge() {
-  $('#challenge-steps').addEventListener('change', (e) => {
-    const n = Number(e.target.dataset.step);
-    if (!n) return;
-    state.challenge.steps[n] = { ...(state.challenge.steps[n] || {}), done: e.target.checked };
-    persist();
-    renderChallenge();
-    renderTabMarkers();
-  });
-  $('#challenge-notes').addEventListener('input', (e) => {
-    state.challenge.notes = e.target.value;
-    persist();
+function initSettings() {
+  $('#open-settings').addEventListener('click', () => openSettings());
+  for (const b of $$('[data-settings]')) b.addEventListener('click', () => openSettings(b.dataset.settings));
+  $('#close-settings').addEventListener('click', closeSettings);
+  $('#settings-backdrop').addEventListener('click', closeSettings);
+  document.addEventListener('keydown', (e) => {
+    if ($('#settings').hidden) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeSettings();
+    } else if (e.key === 'Tab') {
+      // Keep keyboard focus inside the dialog while it is open.
+      const f = $$('#settings button, #settings a[href], #settings label.file-btn').filter((x) => x.offsetParent !== null);
+      if (!f.length) return;
+      const first = f[0];
+      const last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
   });
   $('#data-export').addEventListener('click', () => {
     const json = JSON.stringify(state, null, 2);
@@ -1197,6 +1275,7 @@ function initChallenge() {
     e.target.value = '';
     if (!file) return;
     try {
+      if (file.size > 5 * 1024 * 1024) throw new Error('too large'); // real backups are a few KB
       const raw = JSON.parse(await file.text());
       if (!confirm('Replace your current Lock-In data with this backup?')) return;
       state = migrate(raw);
@@ -1205,17 +1284,19 @@ function initChallenge() {
       persist();
       syncAll();
       loadBackground();
-      toast('Backup imported. Custom background images are not part of backups.');
+      closeSettings();
+      toast("Backup restored. Background images aren't part of backups, so re-upload yours if you used one.");
     } catch {
       toast('That file is not a valid Lock-In backup.');
     }
   });
   $('#data-sample').addEventListener('click', () => {
-    if (state.tasks.length && !confirm('Replace your current deadline and actions with sample data?')) return;
+    if ((state.tasks.length || state.deadline.date) && !confirm('Replace your current deadline and actions with the example?')) return;
     loadSample();
+    closeSettings();
   });
   $('#data-reset').addEventListener('click', async () => {
-    if (!confirm('Erase all Lock-In data in this browser? This cannot be undone.')) return;
+    if (!confirm("Erase your deadline, plan, reminders and backgrounds from this browser? This can't be undone. Download a backup first if you might want them back.")) return;
     storage.clear();
     await clearAssets();
     resetAiSession('');
@@ -1224,20 +1305,32 @@ function initChallenge() {
     candidate = null;
     persist();
     syncAll();
-    toast('All data erased.');
+    closeSettings();
+    showWelcome();
+    toast('Everything was erased.');
   });
 }
 
-function renderChallenge() {
-  $('#challenge-steps').innerHTML = CHALLENGE_STEPS.map((s) => {
-    const done = Boolean(state.challenge.steps[s.n]?.done);
-    const ev = autoEvidence(s.n);
-    return `<li class="${done ? 'done' : ''}">
-      <label class="check"><input type="checkbox" data-step="${s.n}" ${done ? 'checked' : ''}/> <span><strong>${s.n}. ${esc(s.title)}</strong><br /><span class="muted">Done when: ${esc(s.done)}</span></span></label>
-      ${ev ? `<div class="auto">${esc(ev)}</div>` : ''}
-    </li>`;
-  }).join('');
-  $('#challenge-notes').value = state.challenge.notes;
+// ------------------------------------------------------------------ welcome
+
+function showWelcome() {
+  $('#welcome').hidden = Boolean(state.welcomed || state.deadline.date || state.tasks.length);
+}
+
+function initWelcome() {
+  $('#welcome-start').addEventListener('click', () => {
+    state.welcomed = true;
+    persist();
+    $('#welcome').hidden = true;
+    $('#dl-title').focus();
+    updatePreviewJump();
+  });
+  $('#welcome-sample').addEventListener('click', () => {
+    state.welcomed = true;
+    loadSample();
+    $('#welcome').hidden = true;
+    updatePreviewJump();
+  });
 }
 
 // -------------------------------------------------------------- sample data
@@ -1261,7 +1354,7 @@ function loadSample() {
   state.reminders.verified = {};
   persist();
   syncAll();
-  toast('Sample data loaded. It is fictional, so replace it with your real deadline.');
+  toast('Example loaded. It is made up, so replace it with your own deadline when you are ready.');
 }
 
 // --------------------------------------------------------------------- misc
@@ -1284,7 +1377,7 @@ function syncAll() {
   renderSceneryPrompt();
   renderCandidate();
   renderReminders();
-  renderChallenge();
+  showWelcome();
   renderPreview();
   renderInstall();
 }
@@ -1310,9 +1403,28 @@ function init() {
   initDesign();
   initInstall();
   initReminders();
-  initChallenge();
+  initSettings();
+  initWelcome();
 
   for (const t of $$('.tab')) t.addEventListener('click', () => showTab(t.dataset.tab));
+  // Arrow keys move between tabs (WAI-ARIA tabs pattern).
+  $('.tabs').addEventListener('keydown', (e) => {
+    const i = TAB_IDS.indexOf(document.activeElement?.dataset?.tab);
+    if (i < 0) return;
+    const next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: TAB_IDS.length - 1 }[e.key];
+    if (next === undefined) return;
+    e.preventDefault();
+    const id = TAB_IDS[(next + TAB_IDS.length) % TAB_IDS.length];
+    showTab(id);
+    $(`.tab[data-tab="${id}"]`).focus();
+  });
+  $('#toast-action').addEventListener('click', () => {
+    const fn = toastActionFn;
+    toastActionFn = null;
+    $('#toast').hidden = true;
+    fn?.();
+  });
+  initPreviewJump();
   document.addEventListener('click', (e) => {
     const a = e.target.closest('[data-goto]');
     if (!a) return;
@@ -1369,6 +1481,27 @@ function showLoadError(err) {
     storage.clear();
     location.reload();
   });
+}
+
+// On phones the preview sits below the form: offer a button to jump to it
+// while it's out of view.
+let updatePreviewJump = () => {};
+function initPreviewJump() {
+  const btn = $('#preview-jump');
+  if (!('IntersectionObserver' in window)) return;
+  let visible = true;
+  const narrow = window.matchMedia('(max-width: 860px)');
+  const update = (updatePreviewJump = () => {
+    // Hidden on wide screens, while the preview is visible, while Settings is
+    // open, and on the welcome card (nothing to preview yet).
+    btn.hidden = !narrow.matches || visible || !$('#settings').hidden || !$('#welcome').hidden;
+  });
+  new IntersectionObserver((entries) => {
+    visible = entries.some((en) => en.isIntersecting);
+    update();
+  }).observe($('#frame'));
+  narrow.addEventListener?.('change', update);
+  btn.addEventListener('click', () => $('.preview').scrollIntoView({ behavior: 'smooth', block: 'start' }));
 }
 
 // Expose a tiny hook for automated smoke tests / screenshots.

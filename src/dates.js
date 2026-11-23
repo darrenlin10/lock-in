@@ -160,10 +160,31 @@ export function computeCountdown(deadline, now = new Date()) {
 }
 
 const dateFmtCache = new Map();
+
+// Dates on the wallpaper and in the app use the user's English variant
+// (en-GB → "Fri 4 Dec 2026", 24-hour time). The interface is English-only, so
+// other languages fall back to en-US rather than mixing in other month names.
+let displayLocale = 'en-US';
+export function setDisplayLocale(locale) {
+  const l = typeof locale === 'string' && /^en(-|$)/i.test(locale) ? locale : 'en-US';
+  try {
+    new Intl.DateTimeFormat(l);
+  } catch {
+    return displayLocale;
+  }
+  if (l !== displayLocale) {
+    displayLocale = l;
+    dateFmtCache.clear();
+  }
+  return displayLocale;
+}
+export function getDisplayLocale() {
+  return displayLocale;
+}
 function fmt(key, opts) {
   let f = dateFmtCache.get(key);
   if (!f) {
-    f = new Intl.DateTimeFormat('en-US', opts);
+    f = new Intl.DateTimeFormat(displayLocale, opts);
     dateFmtCache.set(key, f);
   }
   return f;

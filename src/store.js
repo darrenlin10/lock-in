@@ -15,17 +15,6 @@ export const STORAGE_KEY = 'lock-in:v1';
 export const SCHEMA_VERSION = 2;
 export const MAX_SNAPSHOTS = 20;
 
-export const CHALLENGE_STEPS = [
-  { n: 1, title: 'Verify the signed-in brief', done: 'Deadline, required tools, submission fields and judging terms recorded from the official mission page.' },
-  { n: 2, title: 'Choose one deadline and target device', done: 'Goal, exact due date/time, timezone and screen dimensions are unambiguous.' },
-  { n: 3, title: 'Create and review the backward plan with Gemini', done: 'Plan is realistic and the next three display actions are selected.' },
-  { n: 4, title: 'Create the desk-and-paper lock-screen design', done: 'Image contains the verified deadline and readable next actions.' },
-  { n: 5, title: 'Install and inspect the image', done: 'Installed image is readable on the real device and correctly dated.' },
-  { n: 6, title: 'Schedule and verify reminders', done: 'Entries exist at the intended times (a generated suggestion alone does not count).' },
-  { n: 7, title: 'Prepare the requested submission evidence', done: 'All required materials are ready and accurate.' },
-  { n: 8, title: 'Review and submit through Handshake', done: 'Handshake confirms submission.' },
-];
-
 export function defaultState(now = new Date()) {
   return {
     schema: SCHEMA_VERSION,
@@ -48,7 +37,7 @@ export function defaultState(now = new Date()) {
     rects: {},
     snapshots: [],
     reminders: { time: '09:00', refresh: 'weekly', verified: {} },
-    challenge: { steps: {}, notes: '' },
+    welcomed: false,
     // Image generation: the user picks the provider/API and model.
     // A model is remembered per provider. API keys are never stored.
     ai: { provider: 'gemini', models: {}, baseUrl: '', size: '' },
@@ -158,11 +147,9 @@ export function migrate(raw, now = new Date()) {
     for (const [uid, v] of Object.entries(rm.verified)) if (isObj(v) && typeof v.sig === 'string') s.reminders.verified[uid] = { sig: v.sig, at: str(v.at, '') };
   }
 
-  const ch = isObj(raw.challenge) ? raw.challenge : {};
-  s.challenge = { steps: {}, notes: str(ch.notes, '', 4000) };
-  if (isObj(ch.steps)) {
-    for (const [n, v] of Object.entries(ch.steps)) if (isObj(v)) s.challenge.steps[n] = { done: Boolean(v.done) };
-  }
+  // The welcome card is for brand-new users only. (Older data may carry a
+  // `challenge` checklist from earlier versions; it is no longer used.)
+  s.welcomed = typeof raw.welcomed === 'boolean' ? raw.welcomed : Boolean(s.deadline.date || s.tasks.length);
 
   const rawAi = isObj(raw.ai) ? raw.ai : {};
   s.ai = {

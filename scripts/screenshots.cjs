@@ -57,6 +57,8 @@ async function canvasPng(page, file) {
 
   // ---- Desktop run
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 2, timezoneId: 'America/Los_Angeles', locale: 'en-US', acceptDownloads: true });
+  // Any Content-Security-Policy violation is reported as an error (fails the run).
+  await ctx.addInitScript(() => document.addEventListener('securitypolicyviolation', (e) => console.error(`CSP violation: ${e.violatedDirective} ${e.blockedURI}`)));
   const page = await ctx.newPage();
   await page.clock.setFixedTime(FIXED_NOW);
   // The mocked 429 below is an expected network error, not an app error.
@@ -135,15 +137,15 @@ async function canvasPng(page, file) {
   check((await page.textContent('#wallpaper-pill')).includes('not confirmed'), 'exported != installed');
   for (const c of await page.$$('.apply-check')) await c.check();
   await page.click('#mark-applied');
-  check((await page.textContent('#wallpaper-pill')).includes('current'), 'marked installed');
+  check((await page.textContent('#wallpaper-pill')).includes('up to date'), 'marked installed');
   // Editing a task makes the installed wallpaper stale.
   await page.click('.tab[data-tab=plan]');
   await page.locator('.task .t-label').first().fill('Confirm rubric ✓ today');
   await page.waitForFunction((w) => document.querySelector('#wallpaper-pill').textContent.includes(w), 'out of date', { timeout: 3000 }).catch(() => {});
   check((await page.textContent('#wallpaper-pill')).includes('out of date'), 'stale after edit');
   await page.locator('.task .t-label').first().fill('Confirm rubric');
-  await page.waitForFunction((w) => document.querySelector('#wallpaper-pill').textContent.includes(w), 'current', { timeout: 3000 }).catch(() => {});
-  check((await page.textContent('#wallpaper-pill')).includes('current'), 'current again after reverting');
+  await page.waitForFunction((w) => document.querySelector('#wallpaper-pill').textContent.includes(w), 'up to date', { timeout: 3000 }).catch(() => {});
+  check((await page.textContent('#wallpaper-pill')).includes('up to date'), 'up to date again after reverting');
   await page.click('.tab[data-tab=install]');
   await hideToast(page);
   await page.screenshot({ path: path.join(out, 'app-install.jpg'), type: 'jpeg', quality: 82 });
@@ -252,10 +254,44 @@ async function canvasPng(page, file) {
   // Put the bundled desk back so later screenshots match the sample.
   await page.check('input[name=bg-type][value=bundled]');
 
-  // Challenge tab
-  await page.click('.tab[data-tab=challenge]');
+  // No Review/challenge tab in the consumer product.
+  check((await page.$$('.tab')).length === 5 && !(await page.$('[data-tab=challenge]')), 'five tabs, no Review tab');
+
+  // Settings dialog: opens, holds focus, closes with Escape and returns focus.
+  await page.click('#open-settings');
+  check(await page.isVisible('#settings'), 'Settings opens');
+  check(await page.evaluate(() => document.activeElement.id === 'close-settings'), 'focus moves into Settings');
+  for (let i = 0; i < 25; i++) await page.keyboard.press('Tab');
+  check(await page.evaluate(() => !!document.activeElement.closest('#settings')), 'Tab key stays inside Settings');
   await hideToast(page);
-  await page.screenshot({ path: path.join(out, 'app-review.jpg'), type: 'jpeg', quality: 82 });
+  await page.screenshot({ path: path.join(out, 'app-settings.jpg'), type: 'jpeg', quality: 82 });
+  await page.keyboard.press('Escape');
+  check(await page.isHidden('#settings'), 'Escape closes Settings');
+  check(await page.evaluate(() => document.activeElement.id === 'open-settings'), 'focus returns to the Settings button');
+  await page.click('.foot [data-settings=privacy]');
+  check(await page.isVisible('#settings-privacy'), 'footer Privacy link opens Settings at Privacy');
+  await page.click('#settings-backdrop', { position: { x: 5, y: 5 } });
+  check(await page.isHidden('#settings'), 'clicking outside closes Settings');
+
+  // Keyboard: arrow keys move between tabs.
+  await page.focus('.tab[data-tab=deadline]');
+  await page.keyboard.press('ArrowRight');
+  check(await page.evaluate(() => document.activeElement.dataset.tab === 'plan' && !document.querySelector('[data-panel=plan]').hidden), 'ArrowRight moves to the next tab');
+  await page.keyboard.press('End');
+  check(await page.evaluate(() => document.activeElement.dataset.tab === 'reminders'), 'End jumps to the last tab');
+
+  // Deleting an action can be undone.
+  await page.click('.tab[data-tab=plan]');
+  const countBefore = await page.locator('.task').count();
+  const titleBefore = await page.locator('.task .t-title').first().inputValue();
+  await page.locator('.task .t-del').first().click();
+  check((await page.locator('.task').count()) === countBefore - 1, 'delete removes the action');
+  // An edit made after the delete must survive Undo.
+  await page.locator('.task .t-label').first().fill('Edited after delete');
+  check(await page.isVisible('#toast-action'), 'Undo offered after delete');
+  await page.click('#toast-action');
+  check((await page.locator('.task').count()) === countBefore && (await page.locator('.task .t-title').first().inputValue()) === titleBefore, 'Undo restores the action in place');
+  check(await page.evaluate(() => window.__lockIn.state.tasks.some((t) => t.label === 'Edited after delete')), 'Undo keeps edits made after the delete');
 
   // Deadline tab hero shot
   await page.click('.tab[data-tab=deadline]');
@@ -279,6 +315,38 @@ async function canvasPng(page, file) {
   const cw = await page.evaluate(() => [document.querySelector('#canvas').width, document.querySelector('#canvas').height]);
   check(cw[0] * cw[1] <= 16777216 && !(await page.isHidden('#dev-capped')), `custom size capped (${cw})`);
   await page.selectOption('#dev-select', 'iphone-6.1');
+
+  // First run: welcome card, example, and it doesn't come back.
+  {
+    const fctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, timezoneId: 'America/Los_Angeles' });
+    const f = await fctx.newPage();
+    f.on('pageerror', (e) => errors.push(`first-run pageerror: ${e.message}`));
+    await f.clock.setFixedTime(FIXED_NOW);
+    await f.goto(base);
+    await f.waitForFunction(() => window.__lockIn && window.__lockIn.lastRender);
+    check(await f.isVisible('#welcome'), 'welcome card on first run');
+    // Export is refused without a due date (no pointless wallpaper).
+    await f.click('.tab[data-tab=install]');
+    let downloaded = false;
+    f.on('download', () => (downloaded = true));
+    await f.click('#export-png');
+    await f.waitForTimeout(300);
+    check(!downloaded && /due date/.test(await f.textContent('#toast')), 'export asks for a due date first');
+    await f.click('.tab[data-tab=deadline]');
+    await f.click('#welcome-sample');
+    check(await f.isHidden('#welcome'), 'example hides the welcome card');
+    check(await f.evaluate(() => window.__lockIn.state.tasks.length === 6), 'example loaded');
+    await f.reload();
+    await f.waitForFunction(() => window.__lockIn && window.__lockIn.lastRender);
+    check(await f.isHidden('#welcome'), 'welcome card stays hidden after reload');
+    // Erase everything brings the welcome card back.
+    f.on('dialog', (d) => d.accept());
+    await f.click('#open-settings');
+    await f.click('#data-reset');
+    await f.waitForFunction(() => !document.querySelector('#welcome').hidden);
+    check(await f.evaluate(() => window.__lockIn.state.tasks.length === 0), 'erase clears the plan');
+    await fctx.close();
+  }
 
   // Robustness: corrupted saved data still opens the app.
   const junkCtx = await browser.newContext();
@@ -309,7 +377,21 @@ async function canvasPng(page, file) {
   const m = await mctx.newPage();
   await m.clock.setFixedTime(FIXED_NOW);
   m.on('pageerror', (e) => errors.push(`mobile pageerror: ${e.message}`));
-  await m.goto(`${base}?sample#design`);
+  await m.goto(`${base}#deadline`);
+  await m.waitForFunction(() => window.__lockIn && window.__lockIn.lastRender);
+  await hideToast(m);
+  await m.screenshot({ path: path.join(out, 'app-welcome-mobile.jpg'), type: 'jpeg', quality: 82 });
+  check(await m.isHidden('#preview-jump'), 'no preview button on the welcome card');
+  await m.click('#welcome-sample');
+  await m.evaluate(() => window.scrollTo(0, 0));
+  await m.waitForFunction(() => !document.querySelector('#preview-jump').hidden, null, { timeout: 3000 }).catch(() => {});
+  check(await m.isVisible('#preview-jump'), 'phone: "See preview" button while the preview is off-screen');
+  await m.click('#preview-jump');
+  await m.waitForFunction(() => document.querySelector('#preview-jump').hidden, null, { timeout: 3000 }).catch(() => {});
+  check(await m.isHidden('#preview-jump'), 'phone: button hides once the preview is in view');
+  const fontSizes = await m.$$eval('input[type=text], input[type=date], select, textarea', (els) => els.filter((e) => e.offsetParent).map((e) => parseFloat(getComputedStyle(e).fontSize)));
+  check(fontSizes.every((px) => px >= 16), `phone: inputs are ≥16px so iOS doesn't zoom (${Math.min(...fontSizes)}px)`);
+  await m.evaluate(() => { location.hash = 'design'; });
   await m.waitForFunction(() => window.__lockIn && window.__lockIn.lastRender);
   const overflowX = await m.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
   check(!overflowX, 'no horizontal scroll on phone');

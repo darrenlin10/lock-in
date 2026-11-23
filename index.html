@@ -3,15 +3,24 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Lock-In · Countdown Lock Screen Studio</title>
-  <meta name="description" content="Plan backward from one deadline with Gemini and turn it into a readable desk-and-paper countdown lock screen." />
-  <meta name="theme-color" content="#1f2a3a" />
+  <title>Lock-In · Countdown Lock Screen</title>
+  <meta name="description" content="Turn your most important deadline into a lock screen you'll actually read: a countdown, the exact due date and your next three steps. Free, private, works offline." />
+  <!-- Only this app's own scripts may run. Network calls are limited to the
+       image APIs the user chooses (any HTTPS host, or a server on localhost). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <meta name="theme-color" content="#f4f1ea" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#15171c" media="(prefers-color-scheme: dark)" />
+  <meta property="og:title" content="Lock-In · Countdown Lock Screen" />
+  <meta property="og:description" content="Turn your most important deadline into a lock screen you'll actually read." />
+  <meta property="og:type" content="website" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <noscript><p class="callout warn" style="margin:16px">Lock-In needs JavaScript to work. Please turn it on for this site, or use a current version of Safari, Chrome, Edge or Firefox.</p></noscript>
   <header class="topbar">
     <div class="brand">
       <img src="icons/icon.svg" alt="" width="32" height="32" />
@@ -22,23 +31,39 @@
     </div>
     <div class="topbar-status">
       <span id="storage-pill" class="pill" title="Where your data lives">Saved on this device</span>
-      <span id="wallpaper-pill" class="pill">No wallpaper exported yet</span>
+      <span id="wallpaper-pill" class="pill">No wallpaper yet</span>
+      <button class="btn ghost settings-btn" id="open-settings" aria-haspopup="dialog" aria-controls="settings">Settings</button>
     </div>
   </header>
 
-  <nav class="tabs" role="tablist" aria-label="Steps">
-    <button role="tab" class="tab" data-tab="deadline" aria-selected="true"><span class="num">1</span> Deadline</button>
-    <button role="tab" class="tab" data-tab="plan" aria-selected="false"><span class="num">2</span> Plan</button>
-    <button role="tab" class="tab" data-tab="design" aria-selected="false"><span class="num">3</span> Design</button>
-    <button role="tab" class="tab" data-tab="install" aria-selected="false"><span class="num">4</span> Install</button>
-    <button role="tab" class="tab" data-tab="reminders" aria-selected="false"><span class="num">5</span> Reminders</button>
-    <button role="tab" class="tab" data-tab="challenge" aria-selected="false"><span class="num">6</span> Review</button>
+  <nav class="tabs-wrap" aria-label="Steps">
+  <div class="tabs" role="tablist" aria-label="Steps">
+    <button role="tab" class="tab" id="tab-deadline" data-tab="deadline" aria-controls="panel-deadline" aria-selected="true"><span class="num">1</span> Deadline</button>
+    <button role="tab" class="tab" id="tab-plan" data-tab="plan" aria-controls="panel-plan" aria-selected="false" tabindex="-1"><span class="num">2</span> Plan</button>
+    <button role="tab" class="tab" id="tab-design" data-tab="design" aria-controls="panel-design" aria-selected="false" tabindex="-1"><span class="num">3</span> Design</button>
+    <button role="tab" class="tab" id="tab-install" data-tab="install" aria-controls="panel-install" aria-selected="false" tabindex="-1"><span class="num">4</span> Export</button>
+    <button role="tab" class="tab" id="tab-reminders" data-tab="reminders" aria-controls="panel-reminders" aria-selected="false" tabindex="-1"><span class="num">5</span> Reminders</button>
+  </div>
   </nav>
 
   <main class="layout">
     <section class="editor">
       <!-- 1. DEADLINE ------------------------------------------------------>
-      <div class="panel" data-panel="deadline" role="tabpanel">
+      <div class="panel" id="panel-deadline" data-panel="deadline" role="tabpanel" aria-labelledby="tab-deadline">
+        <div class="welcome" id="welcome" hidden>
+          <h2>Welcome to Lock-In</h2>
+          <p>Every time you unlock your phone, see the one deadline that matters, how many days are left, and your next three steps.</p>
+          <ol class="welcome-steps">
+            <li><strong>Pick a deadline</strong> and when it's due.</li>
+            <li><strong>Plan the steps</strong>, with Gemini or any AI assistant if you like.</li>
+            <li><strong>Save the wallpaper</strong> and set it as your lock screen, then add reminders to your calendar.</li>
+          </ol>
+          <p class="hint">Free, no account. Everything stays on this device.</p>
+          <div class="buttons">
+            <button class="btn primary" id="welcome-start">Get started</button>
+            <button class="btn" id="welcome-sample">See an example first</button>
+          </div>
+        </div>
         <h2>Choose one deadline</h2>
         <p class="hint">Pick a single deadline that matters. Lock-In keeps its exact date on the lock screen and counts remaining calendar days in the timezone you choose.</p>
 
@@ -47,7 +72,7 @@
           <input id="dl-title" type="text" maxlength="80" placeholder="e.g. Capstone final report" autocomplete="off" />
         </label>
         <label class="field">
-          <span>Goal <small>(for the Gemini planning prompt; not shown on the lock screen)</small></span>
+          <span>Goal <small>(helps write your planning prompt; not shown on the lock screen)</small></span>
           <textarea id="dl-goal" rows="2" maxlength="600" placeholder="e.g. Submit a 20-page capstone report with a working demo"></textarea>
         </label>
 
@@ -80,14 +105,14 @@
           <ul>
             <li><strong>Date-only:</strong> remaining calendar days in the chosen timezone. Shows “Due today” on the date and “Overdue” after it.</li>
             <li><strong>Specific time:</strong> stores the exact instant. Before it, shows calendar days left (or “Due today”). When the instant passes, shows “Overdue”.</li>
-            <li>Days are counted from calendar dates, not by dividing seconds by 86,400, so daylight-saving changes never shift the count.</li>
+            <li>Days are counted by calendar date, so daylight-saving changes never shift the count.</li>
             <li>A wallpaper is a snapshot, not a running timer. Every image carries an “As of” date and the exact due date.</li>
           </ul>
         </details>
       </div>
 
       <!-- 2. PLAN ---------------------------------------------------------->
-      <div class="panel" data-panel="plan" role="tabpanel" hidden>
+      <div class="panel" id="panel-plan" data-panel="plan" role="tabpanel" aria-labelledby="tab-plan" hidden>
         <h2>Plan backward with Gemini</h2>
         <p class="hint">Copy this prompt into Gemini, review the dates and workload it suggests, then paste the plan back here. Lock-In never treats Gemini's suggestions as scheduled or accepted until you add them.</p>
 
@@ -144,7 +169,7 @@
       </div>
 
       <!-- 3. DESIGN -------------------------------------------------------->
-      <div class="panel" data-panel="design" role="tabpanel" hidden>
+      <div class="panel" id="panel-design" data-panel="design" role="tabpanel" aria-labelledby="tab-design" hidden>
         <h2>Design the lock screen</h2>
 
         <h3>Device</h3>
@@ -254,23 +279,23 @@
       </div>
 
       <!-- 4. INSTALL ------------------------------------------------------->
-      <div class="panel" data-panel="install" role="tabpanel" hidden>
-        <h2>Export and install</h2>
+      <div class="panel" id="panel-install" data-panel="install" role="tabpanel" aria-labelledby="tab-install" hidden>
+        <h2>Save it as your lock screen</h2>
         <div class="callout" id="install-status"></div>
 
         <div class="buttons">
           <button class="btn primary" id="export-png">Download PNG</button>
           <button class="btn" id="share-png" hidden>Share / Save to Photos</button>
         </div>
-        <p class="hint">Exporting saves a file. It doesn't change your lock screen. Lock-In can't see your lock screen, so it only says a wallpaper is installed after you confirm it below.</p>
+        <p class="hint">Saving the image doesn't change your lock screen by itself. Lock-In can't see your lock screen, so confirm below once you've set it, and Lock-In will tell you when it goes out of date.</p>
 
         <div class="card" id="apply-card" hidden>
-          <h3>Confirm installation</h3>
+          <h3>Is it on your lock screen?</h3>
           <p class="hint">After setting the image as your lock screen, check it on the device:</p>
           <label class="check"><input type="checkbox" class="apply-check" /> The clock and widgets don't cover the paper</label>
           <label class="check"><input type="checkbox" class="apply-check" /> All text is readable at arm's length</label>
           <label class="check"><input type="checkbox" class="apply-check" /> The countdown and dates are correct</label>
-          <div class="buttons"><button class="btn primary" id="mark-applied" disabled>I installed and checked it</button></div>
+          <div class="buttons"><button class="btn primary" id="mark-applied" disabled>Yes, it's on my lock screen</button></div>
         </div>
 
         <h3>How to set it</h3>
@@ -302,12 +327,12 @@
           </ol>
         </details>
 
-        <h3>Snapshot history</h3>
+        <h3>Recent wallpapers</h3>
         <ul id="snapshot-list" class="snapshots"></ul>
       </div>
 
       <!-- 5. REMINDERS ----------------------------------------------------->
-      <div class="panel" data-panel="reminders" role="tabpanel" hidden>
+      <div class="panel" id="panel-reminders" data-panel="reminders" role="tabpanel" aria-labelledby="tab-reminders" hidden>
         <h2>Schedule reminders</h2>
         <p class="hint">Lock-In builds a reminder schedule from your accepted plan. A suggestion isn't a reminder: add each entry to your calendar, then tick it once you've seen it there.</p>
         <div class="row">
@@ -328,28 +353,6 @@
         <p class="callout" id="rem-summary"></p>
       </div>
 
-      <!-- 6. CHALLENGE / REVIEW ------------------------------------------->
-      <div class="panel" data-panel="challenge" role="tabpanel" hidden>
-        <h2>Review progress</h2>
-        <div class="callout warn">
-          <strong>Verify before submitting.</strong> The submission deadline, required files and judging terms come from the signed-in Handshake mission. This app doesn't verify them.
-          See the public mission: <a href="https://joinhandshake.com/learn/your-deadline-your-design-create-a-countdown-lock-screen-e748e649/" target="_blank" rel="noopener">Your Deadline, Your Design ↗</a>
-        </div>
-        <ol id="challenge-steps" class="steps"></ol>
-        <label class="field">
-          <span>Notes (Gemini's contribution, refinements, how you use it)</span>
-          <textarea id="challenge-notes" rows="5" maxlength="4000"></textarea>
-        </label>
-
-        <h3>Your data</h3>
-        <p class="hint">Everything is stored in this browser only. Backups never include an API key.</p>
-        <div class="buttons">
-          <button class="btn" id="data-export">Export backup (.json)</button>
-          <label class="btn file-btn">Import backup…<input type="file" id="data-import" accept="application/json,.json" hidden /></label>
-          <button class="btn" id="data-sample">Load sample data</button>
-          <button class="btn danger" id="data-reset">Erase all data</button>
-        </div>
-      </div>
     </section>
 
     <!-- PREVIEW ------------------------------------------------------------>
@@ -372,10 +375,63 @@
   </main>
 
   <footer class="foot">
-    <p>Lock-In runs entirely in your browser. No account, no server, no tracking. <a href="selftest.html">Device check</a> · <a href="https://github.com/darrenlin10/lock-in" target="_blank" rel="noopener">Source &amp; README</a></p>
+    <p>Lock-In runs entirely in your browser. No account, no server, no tracking.</p>
+    <p><button class="linklike" data-settings="help">How it works</button> · <button class="linklike" data-settings="privacy">Privacy</button> · <a href="selftest.html">Check my device</a> · <a href="https://github.com/darrenlin10/lock-in" target="_blank" rel="noopener">Source code</a></p>
   </footer>
 
-  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <button class="btn primary preview-jump" id="preview-jump" hidden>See preview ↓</button>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden><span id="toast-text"></span><button class="toast-action" id="toast-action" hidden></button></div>
+
+  <div class="modal-backdrop" id="settings-backdrop" hidden></div>
+  <div class="modal" id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
+    <div class="modal-head">
+      <h2 id="settings-title">Settings</h2>
+      <button class="icon-btn" id="close-settings" aria-label="Close settings">✕</button>
+    </div>
+    <div class="modal-body">
+      <section id="settings-data">
+        <h3>Your data</h3>
+        <p class="hint">Everything is stored in this browser only, on this device. Back it up before clearing your browser data or switching devices. Backups never include an API key.</p>
+        <div class="buttons">
+          <button class="btn" id="data-export">Download a backup</button>
+          <label class="btn file-btn">Restore a backup…<input type="file" id="data-import" accept="application/json,.json" hidden /></label>
+          <button class="btn" id="data-sample">Load the example</button>
+          <button class="btn danger" id="data-reset">Erase everything</button>
+        </div>
+      </section>
+      <section id="settings-help">
+        <h3>How it works</h3>
+        <ol>
+          <li><strong>Deadline.</strong> Pick one deadline and when it's due. The countdown is worked out in the timezone you choose.</li>
+          <li><strong>Plan.</strong> Copy the planning prompt into Gemini or any AI assistant, check the plan it suggests, then paste it back. Or just type your steps.</li>
+          <li><strong>Design.</strong> Choose your phone or computer, a desk and a paper style. The preview warns you if anything is hard to read or hidden by your clock.</li>
+          <li><strong>Export.</strong> Save the image and set it as your lock screen, then tell Lock-In it's done. It will tell you when the wallpaper goes out of date (a new day, or a changed plan).</li>
+          <li><strong>Reminders.</strong> Add your steps to your calendar so you're reminded on the day.</li>
+        </ol>
+        <p class="hint">A wallpaper is a picture, so it doesn't change by itself. Open Lock-In and save a fresh one whenever your plan changes, or weekly (there's an optional reminder for that).</p>
+        <p><a href="selftest.html">Check that this device supports everything →</a></p>
+      </section>
+      <section id="settings-privacy">
+        <h3>Privacy</h3>
+        <ul>
+          <li>Lock-In has no server and no account. It doesn't collect, track or sell anything, and there are no ads or analytics.</li>
+          <li>Your deadline, plan, reminders and images are stored only in this browser. Clearing your browser data removes them, so keep a backup.</li>
+          <li>Information leaves this device only when you choose:
+            <ul>
+              <li><strong>AI image generation (optional):</strong> only the style description is sent to the provider you pick, with your own key. Never your tasks or deadline. The key is kept in memory and forgotten when you close the page.</li>
+              <li><strong>“Add to Google Calendar” links:</strong> open Google Calendar with that reminder's title and time filled in.</li>
+              <li><strong>Copying the planning prompt:</strong> you paste it into the assistant of your choice yourself.</li>
+            </ul>
+          </li>
+        </ul>
+      </section>
+      <section id="settings-about">
+        <h3>About</h3>
+        <p class="hint">Lock-In is free and open source (MIT licence). <a href="https://github.com/darrenlin10/lock-in" target="_blank" rel="noopener">Source code and documentation</a>.</p>
+      </section>
+    </div>
+  </div>
 
   <script type="module" src="src/app.js"></script>
 </body>
